@@ -10,11 +10,10 @@
 //   --mock              без нейросети: заглушка, чтобы проверить весь путь
 //   --out <папка>       куда писать (по умолчанию stories)
 //
-// Модели — по очереди, пока какая-нибудь не ответит:
-//   1. Gemini (ключ GEMINI_API_KEY; модель можно задать GEMINI_MODEL);
-//   2. GitHub Models — GPT-4o mini и другие (токен GITHUB_TOKEN; в Actions он есть всегда).
-// Бесплатные квоты небольшие, поэтому повторяем бережно: перегружена — одна повторная попытка;
-// кончилась квота (429) или модели нет — в этом запуске к ней больше не обращаемся.
+// Модели — строго по порядку MODEL_ORDER, каждой по одному запросу на дату, без повторов:
+// ответила хорошо — берём; ошибка — следующая (и в этом запуске к ней больше не обращаемся);
+// текст не прошёл проверку — следующая.
+// Gemini — ключ GEMINI_API_KEY; GitHub Models — токен GITHUB_TOKEN (в Actions он есть всегда).
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { caseId, dailyPuzzle, isDateKey } from '../src/daily.js';
@@ -30,14 +29,8 @@ const force = flag('--force') || process.env.FORCE === 'true';
 const geminiKey = process.env.GEMINI_API_KEY;
 const githubToken = process.env.GITHUB_TOKEN;
 
-const GEMINI_MODELS = [process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
-const GITHUB_MODELS = ['openai/gpt-4o-mini', 'openai/gpt-4.1-mini', 'deepseek/DeepSeek-V3-0324'];
-
-const ATTEMPTS = 3; // сколько раз просить историю, если ответ не прошёл проверку
-const RETRIES = 2; // сколько раз пробовать перегруженную модель
-const RETRYABLE = new Set([500, 502, 503, 504, 598, 599]); // 598 — таймаут, 599 — пустой или недописанный ответ
-const SKIP = new Set([400, 401, 403, 404, 413, 422, 429]); // повторять бесполезно — переходим к следующей модели
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Порядок: сначала сильные модели. Имя с «/» — GitHub Models, без — Gemini.
+const MODEL_ORDER = ['openai/gpt-4o-mini', 'gemini-3.8-flash', 'openai/gpt-4.1-mini', 'gemini-3.5-flash', 'deepseek/DeepSeek-V3-0324'];
 
 const SYSTEM = 'Ты пишешь короткие мрачные детективные развязки на русском языке. Отвечай строго JSON-объектом {"story": "текст"}.';
 
@@ -144,48 +137,33 @@ async function askGithub(model, prompt) {
   return storyFrom(model, text);
 }
 
-// Все доступные модели по порядку: сначала Gemini, потом GitHub Models.
-const MODELS = [
-  ...(geminiKey ? GEMINI_MODELS.filter(Boolean).map((name) => ({ name, ask: askGemini })) : []),
-  ...(githubToken ? GITHUB_MODELS.map((name) => ({ name, ask: askGithub })) : []),
-];
-const skipped = new Set(); // модели, к которым в этом запуске больше не обращаемся
-let working = null; // модель, которая уже ответила, — спрашиваем её первой
+const isGithub = (name) => name.includes('/');
+const MODELS = MODEL_ORDER.filter((name) => (isGithub(name) ? githubToken : geminiKey)).map((name) => ({
+  name,
+  ask: isGithub(name) ? askGithub : askGemini,
+}));
+const broken = new Set(); // модели, ответившие ошибкой: в этом запуске к ним больше не обращаемся
 
-// Получить текст от первой модели, которая ответит. Если не ответила ни одна — ошибка,
-// и запуск останавливается: остальные даты допишет следующий запуск.
-async function askAny(prompt) {
-  const order = working ? [working, ...MODELS.filter((m) => m !== working)] : MODELS;
-  let last;
-  for (const model of order.filter((m) => !skipped.has(m.name))) {
-    for (let retry = 0; retry < RETRIES; retry++) {
-      try {
-        const text = clean(await model.ask(model.name, prompt));
-        working = model;
-        return text;
-      } catch (error) {
-        last = error;
-        console.warn(`  ${error.message}`);
-        if (SKIP.has(error.status)) {
-          skipped.add(model.name);
-          break;
-        }
-        if (!RETRYABLE.has(error.status)) throw error;
-        if (retry < RETRIES - 1) await sleep(20_000);
-      }
-    }
-  }
-  throw new Error(`ни одна модель не ответила (${last?.message ?? 'все пропущены'})`);
-}
-
+// Каждой модели по одному запросу, по порядку; первая история, прошедшая проверку, — наша.
+// null — не ответила ни одна модель (тогда запуск останавливается: остальное допишет следующий).
 async function generateText(puzzle) {
   const prompt = buildPrompt(puzzle);
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    const text = await askAny(prompt);
+  let answered = false;
+  for (const model of MODELS.filter((m) => !broken.has(m.name))) {
+    let text;
+    try {
+      text = clean(await model.ask(model.name, prompt));
+    } catch (error) {
+      broken.add(model.name);
+      console.warn(`  ${error.message}`);
+      continue;
+    }
+    answered = true;
     const { ok, problems } = validate(text, puzzle);
-    if (ok) return { text, model: working.name };
-    console.warn(`  попытка ${attempt} (${working.name}): ${problems.join('; ')}`);
+    if (ok) return { text, model: model.name };
+    console.warn(`  ${model.name}: не прошла проверку — ${problems.join('; ')}`);
   }
+  if (!answered) throw new Error('ни одна модель не ответила');
   return null;
 }
 

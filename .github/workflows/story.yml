@@ -1,13 +1,13 @@
 # История дня: раз в день нейросеть пишет короткую развязку к делу.
-# Сначала Gemini (ключ — в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY),
-# если он не ответил — GitHub Models (GPT-4o mini и др.) через встроенный токен Actions.
-# Модель можно задать переменной GEMINI_MODEL там же (вкладка Variables); иначе скрипт подберёт сам.
+# Модели по очереди (порядок — в scripts/story.mjs): GPT-4o mini, Gemini 3.8 Flash, GPT-4.1 mini, …
+# Gemini — ключ в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY;
+# GitHub Models — встроенный токен Actions (право models: read).
 # Запустить вручную: Actions → «История дня» → Run workflow.
 name: История дня
 
 on:
   schedule:
-    # дважды в день: если Gemini был перегружен, второй запуск допишет недостающее (готовые не трогает)
+    # дважды в день: если модели были недоступны, второй запуск допишет недостающее (готовые не трогает)
     - cron: '17 9 * * *'
     - cron: '17 15 * * *'
   workflow_dispatch:
@@ -20,7 +20,7 @@ on:
 permissions:
   contents: write
   pages: write
-  models: read # GitHub Models — запасной вариант, если Gemini не ответил
+  models: read # GitHub Models: GPT-4o mini, GPT-4.1 mini, DeepSeek
 
 concurrency:
   group: story
@@ -29,7 +29,7 @@ concurrency:
 jobs:
   story:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # обычно 1–3 минуты; если Gemini совсем не отвечает — не висим долго
+    timeout-minutes: 15 # обычно 1–2 минуты; если модели совсем не отвечают — не висим долго
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,7 +39,6 @@ jobs:
         run: node scripts/story.mjs
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           GITHUB_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force }}
       - name: Сохранить в репозиторий
