@@ -7,6 +7,7 @@
 //   --date 2026-11-08   только эта дата
 //   --force             переписать, даже если файл уже есть
 //   --mock              без Gemini: заглушка, чтобы проверить весь путь
+//   (FORCE=true в окружении — то же, что --force; так делает ручной запуск в Actions)
 //   --out <папка>       куда писать (по умолчанию stories)
 //
 // Модель: GEMINI_MODEL, если задана; иначе по очереди пробуем известные имена Flash.
@@ -21,7 +22,7 @@ const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : n
 
 const outDir = option('--out') ?? 'stories';
 const mock = flag('--mock');
-const force = flag('--force');
+const force = flag('--force') || process.env.FORCE === 'true';
 const key = process.env.GEMINI_API_KEY;
 // Порядок моделей: заданная, потом известные Flash. Если модель перегружена (503) — ждём и пробуем снова,
 // потом берём следующую.
@@ -63,7 +64,13 @@ async function ask(model, prompt) {
       headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.9, maxOutputTokens: 4096 }, // с запасом: новые модели сперва «думают»
+        generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 8192, // с запасом: новые модели сперва «думают»
+        // ответ — строго JSON {"story": "…"}: черновики и подсчёты слов в него не попадут
+        responseMimeType: 'application/json',
+        responseSchema: { type: 'OBJECT', properties: { story: { type: 'STRING' } }, required: ['story'] },
+      },
       }),
       signal: AbortSignal.timeout(90_000),
     });
@@ -87,7 +94,13 @@ async function ask(model, prompt) {
   const reason = candidate?.finishReason ?? 'нет кандидатов';
   if (!text) throw fail(`${model}: пустой ответ (${reason})`, 599);
   if (reason !== 'STOP') throw fail(`${model}: ответ не закончен (${reason})`, 599);
-  return text;
+  try {
+    const story = JSON.parse(text).story;
+    if (typeof story !== 'string' || !story.trim()) throw new Error('нет поля story');
+    return story;
+  } catch (error) {
+    throw fail(`${model}: ответ не в формате JSON (${error.message})`, 599);
+  }
 }
 
 let workingModel = null;

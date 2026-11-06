@@ -83,3 +83,24 @@ test('проверка отбрасывает черновики и оборва
   const cut = good.replace(/[^.]*\.$/, 'Найденный у него яд окончательно изобличил');
   assert.ok(validate(cut, p).problems.includes('оборвано: нет точки в конце'));
 });
+
+test('проверка фактов: чужое время или место в предложении, «до ЧЧ:ММ»', () => {
+  const p = dailyPuzzle('2026-11-07');
+  const all = facts(p);
+  const culprit = all.find((f) => f.culprit);
+  const other = all.find((f) => !f.culprit);
+  const base = mockStory(p);
+  const swap = `${base} ${other.person.name} пришёл в ${culprit.time.name}.`;
+  assert.ok(validate(swap, p).problems.some((x) => x.includes('приписано не тому')));
+  const before = `${base} ${other.person.name} оставался там до ${other.time.name}.`;
+  assert.ok(validate(before, p).problems.some((x) => x.startsWith('«до ЧЧ:ММ»')));
+  const fair = `${base} ${other.person.name} пришёл в ${other.time.name} и был ${other.place.loc}.`;
+  assert.deepEqual(validate(fair, p).problems, []);
+});
+
+test('хорошая история модели за 7 ноября проходит проверку', () => {
+  const p = dailyPuzzle('2026-11-07');
+  const text =
+    'Старый граф собрал гостей в усадьбе, чтобы огласить завещание, но до утра не дожил. Собака во дворе завыла в 19:20 — именно в этот момент пришёл преступник. Это сразу вычеркнуло из списка подозреваемых садовника Глеба в детской с цепью, репортёра Мирона в гостиной с ножницами, певицу Дину в холле с вазой и доктора Павла в кладовой с гирей. Лишь вдова Марта пришла в 19:20, затаившись в прачечной, где у неё и нашли молоток. Загнанная в угол, она тихо произнесла: «Завещание. Всё дело в завещании. Остальное вы и так знаете.» В её померкших глазах я увидел лишь холодную, нечеловеческую пустоту.';
+  assert.deepEqual(validate(text, p).problems, []);
+});

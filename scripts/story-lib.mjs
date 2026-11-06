@@ -34,7 +34,7 @@ export function buildPrompt(puzzle) {
 
 Стиль: нуар, от первого лица следователя, прошедшее время. Мрачно и атмосферно, но без крови и натурализма.
 Длина: 80–120 слов, 5–7 предложений.
-Выведи только готовый текст истории одним-двумя абзацами: без заголовка, черновиков, нумерации, подсчёта слов, пояснений и разметки.
+Ответ — JSON вида {"story": "текст"}. В тексте только сама история одним-двумя абзацами: без заголовка, черновиков, нумерации, подсчёта слов, пояснений и разметки.
 
 Факты — используй только их и ничего в них не меняй:
 Место действия: ${theme.title}. ${introText(puzzle)}
@@ -47,7 +47,7 @@ ${all.map((f) => `— ${line(f)}.`).join('\n')}
 Признание преступника: «${confessionText(puzzle)}»
 
 Расскажи, как следователь вышел на преступника: опирайся на главную улику и на время, место и предмет.
-Других подозреваемых упоминай только по этим фактам и не приписывай им вину.
+Из невиновных упомяни одного-двух, не перечисляй всех; говори о них только эти факты и не приписывай им вину.
 Не придумывай новых персонажей с именами. Закончи короткой жутковатой фразой.`;
 }
 
@@ -67,6 +67,9 @@ function mentionsName(text, name) {
   return new RegExp(`(^|[^А-Яа-яЁё])${base}[а-яё]{0,3}([^а-яё]|$)`).test(text.replaceAll('ё', 'е'));
 }
 
+// Человек упомянут в любой форме: Павел, Павла, Павлом (беглая «е» — поэтому по всем формам).
+const mentionsPerson = (text, person) => [person.name, person.gen, person.ins].some((form) => mentionsName(text, form));
+
 // Подходит ли ответ модели: преступник, его место и предмет на месте; чужих имён нет.
 export function validate(text, puzzle) {
   const problems = [];
@@ -74,12 +77,12 @@ export function validate(text, puzzle) {
   if (words < 50) problems.push(`слишком коротко: ${words} слов`);
   if (words > 170) problems.push(`слишком длинно: ${words} слов`);
   const culprit = facts(puzzle).find((f) => f.culprit);
-  if (!mentionsName(text, culprit.person.name)) problems.push(`нет имени преступника (${culprit.person.name})`);
+  if (!mentionsPerson(text, culprit.person)) problems.push(`нет имени преступника (${culprit.person.name})`);
   if (!mentions(text, culprit.place.name)) problems.push(`нет места преступника (${culprit.place.name})`);
   if (!mentions(text, culprit.item.name)) problems.push(`нет предмета преступника (${culprit.item.name})`);
   const inCase = new Set(puzzle.suspects.map((s) => s.name));
   for (const other of SUSPECTS) {
-    if (!inCase.has(other.name) && mentionsName(text, other.name)) problems.push(`чужое имя: ${other.name}`);
+    if (!inCase.has(other.name) && mentionsPerson(text, other)) problems.push(`чужое имя: ${other.name}`);
   }
   if (/[*#_`]/.test(text)) problems.push('разметка в тексте');
   // черновики и обрывки: история — это обычный русский текст, законченный точкой
@@ -88,7 +91,33 @@ export function validate(text, puzzle) {
   if (!/^[«"—–-]?\s*[А-ЯЁ]/.test(text.trim())) problems.push('начинается не с заглавной буквы');
   if (!/[.!?…»"]$/.test(text.trim())) problems.push('оборвано: нет точки в конце');
   if ((text.match(/\n/g) ?? []).length > 3) problems.push('слишком много строк');
+  if (/(^|[^а-яё])до \d{1,2}:\d{2}/i.test(text)) problems.push('«до ЧЧ:ММ» — время означает момент прихода');
+  problems.push(...swapped(text, puzzle));
   return { ok: problems.length === 0, problems };
+}
+
+// Подмена фактов: в предложении названы другие люди, а время, место или предмет —
+// чужие (их владельца в этом предложении нет). «Мирон пришёл в 19:20», если в 19:20 пришла Марта.
+function swapped(text, puzzle) {
+  const all = facts(puzzle);
+  const problems = [];
+  for (const sentence of text.split(/(?<=[.!?…])\s+/)) {
+    const named = all.filter((f) => mentionsPerson(sentence, f.person));
+    if (!named.length) continue;
+    for (const owner of all) {
+      if (named.includes(owner)) continue;
+      const hits = [
+        sentence.includes(owner.time.name) && owner.time.name,
+        mentions(sentence, owner.place.name) && owner.place.name,
+        mentions(sentence, owner.item.name) && owner.item.name,
+      ].filter(Boolean);
+      // одно и то же место или предмет может быть у разных людей только по ошибке — проверяем строго
+      for (const what of hits) {
+        problems.push(`«${what}» приписано не тому: в предложении ${named.map((f) => f.person.name).join(', ')}, а это — ${owner.person.name}`);
+      }
+    }
+  }
+  return problems;
 }
 
 // Привести ответ к простому тексту: убрать кавычки вокруг и лишние пробелы.

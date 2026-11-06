@@ -10,6 +10,11 @@ on:
     - cron: '17 9 * * *'
     - cron: '17 15 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Переписать и готовые истории'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -33,6 +38,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          FORCE: ${{ inputs.force }}
       - name: Сохранить в репозиторий
         if: always()
         env:
