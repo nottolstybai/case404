@@ -1,5 +1,5 @@
 # История дня: раз в день нейросеть пишет короткую развязку к делу.
-# Модели по очереди (порядок — в scripts/story.mjs): Gemini 3.8 Flash, затем Gemini 3.5 Flash.
+# Модели по очереди (порядок — в scripts/story.mjs): Gemini 3.6 Flash, 3.8 Flash, 3.5 Flash.
 # Ключ — в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY.
 # Запустить вручную: Actions → «История дня» → Run workflow.
 name: История дня

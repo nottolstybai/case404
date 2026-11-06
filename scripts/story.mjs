@@ -28,8 +28,8 @@ const mock = flag('--mock');
 const force = flag('--force') || process.env.FORCE === 'true';
 const geminiKey = process.env.GEMINI_API_KEY;
 
-// Порядок: сначала сильная модель, потом запасная. У каждой своя бесплатная квота (около 20 запросов в день).
-const MODEL_ORDER = ['gemini-3.8-flash', 'gemini-3.5-flash'];
+// Порядок моделей Gemini; у каждой своя бесплатная суточная квота (сброс в полночь по тихоокеанскому времени).
+const MODEL_ORDER = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash'];
 
 function dates() {
   const one = option('--date');
