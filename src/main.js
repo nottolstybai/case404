@@ -4,6 +4,7 @@ import { caseId, dailyPuzzle, dateKey, dateLabel, isDateKey } from './daily.js';
 import { CHECK, CROSS, accuse, accuseCategories, giveUp, hint, isOver, newGame, tap, toggleClue, undo } from './game.js';
 import { clueText, confessionText, introText, mainClueText, rulesText, themeTitle, valueName } from './text.js';
 import { STAMP, portrait, scene } from './art.js';
+import { startMusic, stopMusic } from './music.js';
 import { hashString } from './rng.js';
 import { clock, plural, record, shareText, solvedCount, streak, untilMidnight } from './stats.js';
 
@@ -38,7 +39,7 @@ const storage = {
 const id = caseId(puzzle);
 const saved = storage.get(SAVE);
 let game = saved?.id === id ? { ...newGame(puzzle), ...saved } : { ...newGame(puzzle), id };
-let settings = { easy: false, seenHelp: false, cluesOpen: true, ...storage.get(SETTINGS) };
+let settings = { easy: false, seenHelp: false, cluesOpen: true, music: true, ...storage.get(SETTINGS) };
 let hintNow = null; // { text, cells, clue }
 let mode = CROSS; // что ставит тап: ✗ или ✓
 // открытый лист: 'help' | 'accuse' | 'giveup' | 'result' | null
@@ -172,6 +173,7 @@ function helpSheet() {
       <input type="checkbox" data-act="easy" ${settings.easy ? 'checked' : ''}>
       <span>Упрощённый режим: последний оставшийся вариант отмечается сам</span>
     </label>
+    <p class="credits">Музыка: «Drone in D», Kevin MacLeod (<a href="https://incompetech.com" target="_blank" rel="noopener">incompetech.com</a>), лицензия <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. В игре — 90-секундный фрагмент, зацикленный. Выключить — ♪ в шапке.</p>
     <div class="actions"><button class="btn primary" data-act="close-sheet">Понятно</button></div>`);
 }
 
@@ -288,6 +290,7 @@ function render() {
       </div>
       <div class="top-right">
         <span class="timer" id="timer">${clock(game.elapsed)}</span>
+        <button class="icon-btn" data-act="music" aria-label="${settings.music ? 'Выключить музыку' : 'Включить музыку'}" aria-pressed="${settings.music}">${settings.music ? '♪' : '<s>♪</s>'}</button>
         <button class="icon-btn" data-act="help" aria-label="Как играть">?</button>
       </div>
     </header>
@@ -370,6 +373,12 @@ const actions = {
   'close-hint'() {
     hintNow = null;
   },
+  music() {
+    settings.music = !settings.music;
+    saveSettings();
+    if (settings.music) startMusic();
+    else stopMusic();
+  },
   help() {
     sheet = 'help';
   },
@@ -446,6 +455,16 @@ app.addEventListener('click', (event) => {
   render();
   if (el.dataset.act === 'hint') reveal();
 });
+
+// Музыка: браузер разрешает звук только после действия игрока — стартуем с первого касания.
+// Если первым делом нажали саму кнопку музыки, её обработает действие music().
+document.addEventListener(
+  'pointerdown',
+  (event) => {
+    if (settings.music && !event.target.closest('[data-act="music"]')) startMusic();
+  },
+  { once: true },
+);
 
 app.addEventListener('change', (event) => {
   if (event.target.dataset.act !== 'easy') return;

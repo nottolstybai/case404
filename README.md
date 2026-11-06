@@ -7,3 +7,5 @@
 **Играть:** https://nottolstybai.github.io/case404/
 
 Локально: `python3 -m http.server 8765` · тесты: `npm test` · перед пушем: `npm run stamp`
+
+Музыка: «Drone in D», Kevin MacLeod (incompetech.com), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) — 90-секундный фрагмент, зацикленный.
