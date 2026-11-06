@@ -22,6 +22,7 @@ concurrency:
 jobs:
   story:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # обычно 1–3 минуты; если Gemini совсем не отвечает — не висим долго
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
