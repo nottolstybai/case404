@@ -81,8 +81,12 @@ async function ask(model, prompt) {
     throw fail(`${model}: HTTP ${response.status} ${message}`, response.status);
   }
   const data = await response.json();
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-  if (!text) throw fail(`${model}: пустой ответ (${data.candidates?.[0]?.finishReason ?? 'нет кандидатов'})`, 599);
+  const candidate = data.candidates?.[0];
+  // «мысли» модели (thought: true) — не история; берём только готовый текст
+  const text = candidate?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? '').join('') ?? '';
+  const reason = candidate?.finishReason ?? 'нет кандидатов';
+  if (!text) throw fail(`${model}: пустой ответ (${reason})`, 599);
+  if (reason !== 'STOP') throw fail(`${model}: ответ не закончен (${reason})`, 599);
   return text;
 }
 

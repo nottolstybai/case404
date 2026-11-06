@@ -71,3 +71,15 @@ test('все места и предметы всех тем узнаются в 
     for (const i of theme.items) assert.ok(mentions(`У него нашли ${i.acc}.`, i.name), `${key}: ${i.acc}`);
   }
 });
+
+test('проверка отбрасывает черновики и оборванные истории (как пришли от модели)', () => {
+  const p = dailyPuzzle('2026-11-06');
+  const good = mockStory(p);
+  const draft = `ова ${good}\n    3. Главный след вёл вниз.\n    4. Ещё строка.\n    Sentences: 6.\n    Word count breakdown:\n    S1: На (1) штормовом (2)`;
+  const problems = validate(draft, p).problems;
+  for (const expected of ['латиница в тексте', 'нумерованные строки', 'начинается не с заглавной буквы', 'оборвано: нет точки в конце']) {
+    assert.ok(problems.includes(expected), expected);
+  }
+  const cut = good.replace(/[^.]*\.$/, 'Найденный у него яд окончательно изобличил');
+  assert.ok(validate(cut, p).problems.includes('оборвано: нет точки в конце'));
+});
