@@ -1,6 +1,6 @@
 # История дня: раз в день нейросеть пишет короткую развязку к делу.
-# Модели по очереди (порядок — в scripts/story.mjs): Gemini 3.6 Flash, 3.8 Flash, 3.5 Flash, затем Gemma 4.
-# Ключ — в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY.
+# Модели по очереди (порядок — в scripts/story.mjs): Groq gpt-oss-120b, Gemini 3.6 Flash, Gemini 3.8 Flash.
+# Ключи — в Settings → Secrets and variables → Actions → секреты GROQ_API_KEY и GEMINI_API_KEY.
 # Запустить вручную: Actions → «История дня» → Run workflow.
 name: История дня
 
@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
       models:
-        description: 'Только эти модели, через запятую (для проверки), например gemma-4-31b-it'
+        description: 'Только эти модели, через запятую (для проверки), например openai/gpt-oss-120b или gemma-4-31b-it'
         type: string
         default: ''
 
@@ -41,6 +41,7 @@ jobs:
         run: node scripts/story.mjs
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           FORCE: ${{ inputs.force }}
           STORY_MODELS: ${{ inputs.models }}
       - name: Сохранить в репозиторий

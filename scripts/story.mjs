@@ -1,5 +1,5 @@
 // История дела от нейросети. Запускается раз в день из GitHub Actions (.github/workflows/story.yml),
-// можно и вручную: GEMINI_API_KEY=… node scripts/story.mjs
+// можно и вручную: GROQ_API_KEY=… GEMINI_API_KEY=… node scripts/story.mjs
 //
 // Пишет stories/<дата>.json для вчера, сегодня и двух дней вперёд (кроме уже готовых),
 // чтобы история была у игроков в любом часовом поясе.
@@ -12,7 +12,8 @@
 //
 // Модели — строго по порядку MODEL_ORDER, каждой по одному запросу на дату, без повторов:
 // ответила хорошо — берём; ошибка — следующая (и в этом запуске к ней больше не обращаемся);
-// текст не прошёл проверку — следующая. Ключ — GEMINI_API_KEY.
+// текст не прошёл проверку — следующая.
+// Ключи: GROQ_API_KEY (модели с «/» в имени, например openai/gpt-oss-120b) и GEMINI_API_KEY (Gemini и Gemma).
 // (GitHub Models пробовали как запасной вариант, но сервис закрыт с 30 июля 2026.)
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -27,10 +28,12 @@ const outDir = option('--out') ?? 'stories';
 const mock = flag('--mock');
 const force = flag('--force') || process.env.FORCE === 'true';
 const geminiKey = process.env.GEMINI_API_KEY;
+const groqKey = process.env.GROQ_API_KEY;
 
 // Порядок моделей; у каждой своя бесплатная суточная квота (сброс в полночь по тихоокеанскому времени).
-// Gemma — запасной вариант на том же ключе. Для проверки порядок можно задать: STORY_MODELS=gemma-4-31b-it
-const DEFAULT_ORDER = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'];
+// Groq — бесплатный план, около 1000 запросов в день. Gemma (gemma-4-31b-it) подключена, но в очередь
+// по умолчанию не входит; для проверки порядок можно задать: STORY_MODELS=gemma-4-31b-it
+const DEFAULT_ORDER = ['openai/gpt-oss-120b', 'gemini-3.6-flash', 'gemini-3.8-flash'];
 const MODEL_ORDER = process.env.STORY_MODELS?.trim()
   ? process.env.STORY_MODELS.split(',').map((m) => m.trim()).filter(Boolean)
   : DEFAULT_ORDER;
@@ -147,9 +150,46 @@ async function askGemma(model, prompt) {
   return story;
 }
 
-const MODELS = geminiKey
-  ? MODEL_ORDER.map((name) => ({ name, ask: name.startsWith('gemma-') ? askGemma : askGemini }))
-  : [];
+// Groq — OpenAI-совместимый API (по документации console.groq.com/docs/openai);
+// строгий JSON — response_format json_schema со strict: true (поддерживается для gpt-oss-120b).
+async function askGroq(model, prompt) {
+  const data = await post(
+    model,
+    'https://api.groq.com/openai/v1/chat/completions',
+    { authorization: `Bearer ${groqKey}` },
+    {
+      model,
+      messages: [
+        { role: 'system', content: 'Ты пишешь короткие мрачные детективные развязки на русском языке.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.7,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'story',
+          strict: true,
+          schema: { type: 'object', properties: { story: { type: 'string' } }, required: ['story'], additionalProperties: false },
+        },
+      },
+    },
+  );
+  const choice = data.choices?.[0];
+  const text = choice?.message?.content ?? '';
+  if (!text) throw fail(`${model}: пустой ответ (${choice?.finish_reason ?? 'нет вариантов'})`, 599);
+  if (choice.finish_reason && choice.finish_reason !== 'stop') throw fail(`${model}: ответ не закончен (${choice.finish_reason})`, 599);
+  const story = looseStory(text);
+  if (!story) throw fail(`${model}: не удалось разобрать ответ: ${text.slice(0, 60)}`, 599);
+  return story;
+}
+
+// Кто отвечает за модель: «/» в имени — Groq, gemma-… — Gemma (Interactions API), иначе Gemini.
+function provider(name) {
+  if (name.includes('/')) return groqKey && askGroq;
+  if (name.startsWith('gemma-')) return geminiKey && askGemma;
+  return geminiKey && askGemini;
+}
+const MODELS = MODEL_ORDER.filter((name) => provider(name)).map((name) => ({ name, ask: provider(name) }));
 const broken = new Set(); // модели, ответившие ошибкой: в этом запуске к ним больше не обращаемся
 
 // Каждой модели по одному запросу, по порядку; первая история, прошедшая проверку, — наша.
@@ -177,7 +217,7 @@ async function generateText(puzzle) {
 
 async function main() {
   if (!mock && !MODELS.length) {
-    console.error('Нет GEMINI_API_KEY. Для проверки без ключа: node scripts/story.mjs --mock --out <папка>');
+    console.error('Нет ключей (GROQ_API_KEY, GEMINI_API_KEY). Для проверки без них: node scripts/story.mjs --mock --out <папка>');
     process.exit(1);
   }
   mkdirSync(outDir, { recursive: true });
