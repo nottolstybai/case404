@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Штамп «404»: цифры нарисованы линиями, чтобы не зависеть от шрифта -->
+  <g transform="rotate(-7 32 32)" fill="none" stroke="#c0392b" stroke-width="4" stroke-linecap="square">
+    <rect x="4" y="13" width="56" height="38"/>
+    <path d="M20 22 V42 M20 22 L10 36 H23"/>
+    <rect x="27" y="22" width="10" height="20" rx="4"/>
+    <path d="M51 22 V42 M51 22 L41 36 H54"/>
+  </g>
+</svg>
