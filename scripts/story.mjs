@@ -1,5 +1,5 @@
 // История дела от нейросети. Запускается раз в день из GitHub Actions (.github/workflows/story.yml),
-// можно и вручную: GEMINI_API_KEY=… GITHUB_TOKEN=… node scripts/story.mjs
+// можно и вручную: GEMINI_API_KEY=… node scripts/story.mjs
 //
 // Пишет stories/<дата>.json для вчера, сегодня и двух дней вперёд (кроме уже готовых),
 // чтобы история была у игроков в любом часовом поясе.
@@ -12,8 +12,8 @@
 //
 // Модели — строго по порядку MODEL_ORDER, каждой по одному запросу на дату, без повторов:
 // ответила хорошо — берём; ошибка — следующая (и в этом запуске к ней больше не обращаемся);
-// текст не прошёл проверку — следующая.
-// Gemini — ключ GEMINI_API_KEY; GitHub Models — токен GITHUB_TOKEN (в Actions он есть всегда).
+// текст не прошёл проверку — следующая. Ключ — GEMINI_API_KEY.
+// (GitHub Models пробовали как запасной вариант, но сервис закрыт с 30 июля 2026.)
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { caseId, dailyPuzzle, isDateKey } from '../src/daily.js';
@@ -27,12 +27,9 @@ const outDir = option('--out') ?? 'stories';
 const mock = flag('--mock');
 const force = flag('--force') || process.env.FORCE === 'true';
 const geminiKey = process.env.GEMINI_API_KEY;
-const githubToken = process.env.GITHUB_TOKEN;
 
-// Порядок: сначала сильные модели. Имя с «/» — GitHub Models, без — Gemini.
-const MODEL_ORDER = ['openai/gpt-4o-mini', 'gemini-3.8-flash', 'openai/gpt-4.1-mini', 'gemini-3.5-flash', 'deepseek/DeepSeek-V3-0324'];
-
-const SYSTEM = 'Ты пишешь короткие мрачные детективные развязки на русском языке. Отвечай строго JSON-объектом {"story": "текст"}.';
+// Порядок: сначала сильная модель, потом запасная. У каждой своя бесплатная квота (около 20 запросов в день).
+const MODEL_ORDER = ['gemini-3.8-flash', 'gemini-3.5-flash'];
 
 function dates() {
   const one = option('--date');
@@ -76,7 +73,12 @@ async function post(name, url, headers, body) {
     message = message.split('\n')[0] + (retryIn ? ` (снова можно через ${retryIn})` : '');
     throw fail(`${name}: HTTP ${response.status} ${message}`, response.status);
   }
-  return response.json();
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw fail(`${name}: ответ не JSON (HTTP ${response.status}): ${text.slice(0, 60).trim()}`, 599);
+  }
 }
 
 // Ответ модели — JSON {"story": "…"}; достаём текст.
@@ -114,34 +116,7 @@ async function askGemini(model, prompt) {
   return storyFrom(model, text);
 }
 
-async function askGithub(model, prompt) {
-  const data = await post(
-    model,
-    'https://models.github.ai/inference/chat/completions',
-    { authorization: `Bearer ${githubToken}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' },
-    {
-      model,
-      messages: [
-        { role: 'system', content: SYSTEM },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 1500,
-      response_format: { type: 'json_object' },
-    },
-  );
-  const choice = data.choices?.[0];
-  const text = choice?.message?.content ?? '';
-  if (!text) throw fail(`${model}: пустой ответ (${choice?.finish_reason ?? 'нет вариантов'})`, 599);
-  if (choice.finish_reason && choice.finish_reason !== 'stop') throw fail(`${model}: ответ не закончен (${choice.finish_reason})`, 599);
-  return storyFrom(model, text);
-}
-
-const isGithub = (name) => name.includes('/');
-const MODELS = MODEL_ORDER.filter((name) => (isGithub(name) ? githubToken : geminiKey)).map((name) => ({
-  name,
-  ask: isGithub(name) ? askGithub : askGemini,
-}));
+const MODELS = geminiKey ? MODEL_ORDER.map((name) => ({ name, ask: askGemini })) : [];
 const broken = new Set(); // модели, ответившие ошибкой: в этом запуске к ним больше не обращаемся
 
 // Каждой модели по одному запросу, по порядку; первая история, прошедшая проверку, — наша.
@@ -169,7 +144,7 @@ async function generateText(puzzle) {
 
 async function main() {
   if (!mock && !MODELS.length) {
-    console.error('Нет ни GEMINI_API_KEY, ни GITHUB_TOKEN. Для проверки без них: node scripts/story.mjs --mock --out <папка>');
+    console.error('Нет GEMINI_API_KEY. Для проверки без ключа: node scripts/story.mjs --mock --out <папка>');
     process.exit(1);
   }
   mkdirSync(outDir, { recursive: true });

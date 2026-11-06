@@ -1,7 +1,6 @@
 # История дня: раз в день нейросеть пишет короткую развязку к делу.
-# Модели по очереди (порядок — в scripts/story.mjs): GPT-4o mini, Gemini 3.8 Flash, GPT-4.1 mini, …
-# Gemini — ключ в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY;
-# GitHub Models — встроенный токен Actions (право models: read).
+# Модели по очереди (порядок — в scripts/story.mjs): Gemini 3.8 Flash, затем Gemini 3.5 Flash.
+# Ключ — в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY.
 # Запустить вручную: Actions → «История дня» → Run workflow.
 name: История дня
 
@@ -20,7 +19,6 @@ on:
 permissions:
   contents: write
   pages: write
-  models: read # GitHub Models: GPT-4o mini, GPT-4.1 mini, DeepSeek
 
 concurrency:
   group: story
@@ -39,7 +37,6 @@ jobs:
         run: node scripts/story.mjs
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force }}
       - name: Сохранить в репозиторий
         if: always()
