@@ -1,5 +1,6 @@
-# История дня: раз в день Gemini пишет короткую развязку к делу.
-# Ключ — в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY.
+# История дня: раз в день нейросеть пишет короткую развязку к делу.
+# Сначала Gemini (ключ — в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY),
+# если он не ответил — GitHub Models (GPT-4o mini и др.) через встроенный токен Actions.
 # Модель можно задать переменной GEMINI_MODEL там же (вкладка Variables); иначе скрипт подберёт сам.
 # Запустить вручную: Actions → «История дня» → Run workflow.
 name: История дня
@@ -19,6 +20,7 @@ on:
 permissions:
   contents: write
   pages: write
+  models: read # GitHub Models — запасной вариант, если Gemini не ответил
 
 concurrency:
   group: story
@@ -38,6 +40,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          GITHUB_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force }}
       - name: Сохранить в репозиторий
         if: always()
