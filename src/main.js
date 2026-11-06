@@ -2,8 +2,8 @@
 
 import { dailyPuzzle, dateKey, dateLabel, isDateKey } from './daily.js';
 import { CHECK, CROSS, accuse, accuseCategories, giveUp, hint, isOver, newGame, tap, toggleClue, undo } from './game.js';
-import { STORY, clueText, confessionText, mainClueText, rulesText, valueName } from './text.js';
-import { STAMP, house, portrait } from './art.js';
+import { clueText, confessionText, introText, mainClueText, rulesText, themeTitle, valueName } from './text.js';
+import { STAMP, portrait, scene } from './art.js';
 import { hashString } from './rng.js';
 import { clock, plural, record, shareText, solvedCount, streak, untilMidnight } from './stats.js';
 
@@ -114,7 +114,7 @@ const exChip = (text, state = '') => `<span class="chip ${state}">${text}</span>
 function helpSheet() {
   return overlay(`
     <h3>Как играть</h3>
-    <p class="sub">${rulesText}</p>
+    <p class="sub">${rulesText(puzzle)}</p>
     <div class="example">
       <div class="ex-step">
         <p class="ex-clue">«Вера не была в подвале.»</p>
@@ -256,8 +256,9 @@ function render() {
     </header>
 
     <section class="story">
-      <div class="banner">${house(puzzle.story.art)}${STAMP}</div>
-      <p class="intro">${STORY.intros[puzzle.story.intro].text}</p>
+      <div class="banner">${scene(puzzle.theme, puzzle.story.art)}${STAMP}</div>
+      <p class="place-tag">${themeTitle(puzzle)}</p>
+      <p class="intro">${introText(puzzle)}</p>
       <div class="main-clue"><span class="tag">Главная улика</span>${mainClueText(puzzle)}</div>
     </section>
 

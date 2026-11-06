@@ -348,3 +348,5 @@ button:disabled { opacity: 0.4; cursor: default; }
 /* улики: текст пропорциональным шрифтом — короче строки; номер остаётся «машинописным» */
 .clue { font-family: var(--serif); font-size: 15px; }
 .clue .num { font-family: var(--mono); font-size: 13px; padding-top: 2px; }
+
+.place-tag { margin: 14px 0 -6px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--amber); }

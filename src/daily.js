@@ -2,7 +2,7 @@
 
 import { hashString, mulberry32, pick, randInt, shuffle } from './rng.js';
 import { SUSPECTS } from './suspects.js';
-import { ITEMS, PLACES } from './puzzle.js';
+import { THEMES, THEME_KEYS } from './themes.js';
 import { generate } from './generator.js';
 import { STORY } from './text.js';
 
@@ -53,18 +53,22 @@ export function deck(size, number, salt) {
 
 export function dailyPuzzle(key) {
   const rand = mulberry32(hashString(`case-file:${key}`));
-  const suspects = shuffle(rand, SUSPECTS).slice(0, SIZE);
+  const number = caseNumber(key);
+  // тема дня идёт «колодой»: за четыре дня подряд — все четыре места
+  const themeKey = THEME_KEYS[deck(THEME_KEYS.length, number, 'theme')];
+  const theme = THEMES[themeKey];
+  const pool = SUSPECTS.filter((s) => !theme.skipRoles.includes(s.role));
+  const suspects = shuffle(rand, pool).slice(0, SIZE);
   const categories = [
     { key: 'time', title: 'Время', ordered: true, values: times(rand, SIZE) },
-    { key: 'place', title: 'Место', values: shuffle(rand, PLACES).slice(0, SIZE) },
-    { key: 'item', title: 'Предмет', values: shuffle(rand, ITEMS).slice(0, SIZE) },
+    { key: 'place', title: 'Место', values: shuffle(rand, theme.places).slice(0, SIZE) },
+    { key: 'item', title: 'Предмет', values: shuffle(rand, theme.items).slice(0, SIZE) },
   ];
   const puzzle = generate(rand, { suspects, categories });
-  const number = caseNumber(key);
-  const intro = deck(STORY.intros.length, number, 'intro');
+  const intro = deck(theme.intros.length, number, `intro:${themeKey}`);
   const mainKey = categories[puzzle.culpritClue.k].key;
   // главная улика должна сочетаться со вступлением: «орудие» — только если тело нашли
-  const mains = STORY.main[mainKey].map((m, i) => ({ ...m, i })).filter((m) => !m.body || STORY.intros[intro].body !== false);
+  const mains = theme.main[mainKey].map((m, i) => ({ ...m, i })).filter((m) => !m.body || theme.intros[intro].body !== false);
   const story = {
     intro,
     main: pick(rand, mains).i,
@@ -72,5 +76,5 @@ export function dailyPuzzle(key) {
     // картинка дня: какое окно горит, какая луна, какая погода
     art: { window: randInt(rand, 6), moon: randInt(rand, 2), weather: randInt(rand, 4) },
   };
-  return { ...puzzle, story, key, number };
+  return { ...puzzle, theme: themeKey, story, key, number };
 }

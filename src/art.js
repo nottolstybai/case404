@@ -167,30 +167,20 @@ export function portrait(role) {
 
 export const ROLES = Object.keys(LOOKS);
 
-// Дом на холме. Сцена широкая: на телефоне видна середина с домом, на большом экране — вся.
+// Картинка дела: ночное небо, луна, погода — и силуэт места по теме дня.
+// Сцена широкая (720×120): на телефоне видна середина, на большом экране — вся.
 // art = { window, moon, weather } — меняется день ото дня: какое окно горит,
 // полная луна или серп, ясно / дождь / снег / туман.
+const SKY_INK = '#050404';
 const STARS = [
   [24, 14], [70, 34], [118, 10], [160, 44], [214, 22], [262, 8], [318, 30], [396, 14],
   [430, 50], [530, 12], [566, 40], [612, 20], [664, 36], [700, 10],
-];
-const WINDOWS = [
-  [187.5, 40, 7, 10],
-  [136, 58, 8, 10],
-  [154, 58, 8, 10],
-  [172, 58, 8, 10],
-  [136, 72, 8, 10],
-  [172, 72, 8, 10],
 ];
 
 function weather(kind) {
   const range = (count) => Array.from({ length: count }, (_, i) => i);
   if (kind === 1) {
-    const drops = range(70).map((i) => {
-      const x = (i * 37) % 724;
-      const y = (i * 53) % 112;
-      return `M${x} ${y} l-4 10`;
-    });
+    const drops = range(70).map((i) => `M${(i * 37) % 724} ${(i * 53) % 112} l-4 10`);
     return `<path d="${drops.join(' ')}" stroke="#9a9286" stroke-width="0.7" opacity="0.35"/>`;
   }
   if (kind === 2) {
@@ -201,18 +191,148 @@ function weather(kind) {
   return '';
 }
 
-export function house(art = { window: 0, moon: 0, weather: 0 }) {
-  const lit = WINDOWS[art.window % WINDOWS.length];
-  const dark = WINDOWS.filter((w) => w !== lit)
-    .map(([x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`)
+function moon(x, y, crescent) {
+  const disc = crescent
+    ? `<mask id="crescent"><circle cx="${x}" cy="${y}" r="17" fill="#fff"/><circle cx="${x + 9}" cy="${y - 6}" r="16" fill="#000"/></mask>
+       <circle cx="${x}" cy="${y}" r="17" fill="#d9d0bf" mask="url(#crescent)"/>`
+    : `<circle cx="${x}" cy="${y}" r="17" fill="#d9d0bf"/>
+       <circle cx="${x - 6}" cy="${y - 5}" r="3" fill="#c5bba8"/><circle cx="${x + 5}" cy="${y + 5}" r="2" fill="#c5bba8"/>`;
+  return `<circle cx="${x}" cy="${y}" r="46" fill="url(#glow)"/>${disc}`;
+}
+
+const birds = (x, y) =>
+  `<path d="M${x} ${y} q4 -4 8 0 q4 -4 8 0 M${x + 20} ${y + 16} q3 -3 6 0 q3 -3 6 0" stroke="${SKY_INK}" stroke-width="1.4" fill="none"/>`;
+
+// Окна: все тёмные, кроме одного горящего lit (его выбирает art.window).
+function windows(list, lit, w = 8, h = 10) {
+  const dark = list
+    .filter((p) => p !== lit)
+    .map(([x, y]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`)
     .join('');
-  const [lx, ly, lw, lh] = lit;
-  const moon =
-    art.moon === 1
-      ? `<mask id="crescent"><circle cx="292" cy="36" r="17" fill="#fff"/><circle cx="301" cy="30" r="16" fill="#000"/></mask>
-         <circle cx="292" cy="36" r="17" fill="#d9d0bf" mask="url(#crescent)"/>`
-      : `<circle cx="292" cy="36" r="17" fill="#d9d0bf"/>
-         <circle cx="286" cy="31" r="3" fill="#c5bba8"/><circle cx="297" cy="41" r="2" fill="#c5bba8"/>`;
+  const [lx, ly] = lit;
+  return `<g fill="#17140f">${dark}</g>
+    <circle cx="${lx + w / 2}" cy="${ly + h / 2}" r="14" fill="url(#lamp)"/>
+    <rect x="${lx}" y="${ly}" width="${w}" height="${h}" fill="${GOLD}"/>
+    <path d="M${lx + w / 2} ${ly}v${h}M${lx} ${ly + h / 2}h${w}" stroke="${SKY_INK}" stroke-width="0.8"/>`;
+}
+
+// Какое окно горит сегодня: одно из кандидатов по art.window.
+const pick = (candidates, art, draw) => draw(candidates[art.window % candidates.length]);
+const HOUSE_WINDOWS = [[367, 40], [316, 58], [334, 58], [352, 58], [316, 72], [352, 72]];
+
+const dist = (d) => `<path d="${d}" fill="#131116"/>`;
+const tree = (x, y, s = 1) =>
+  `<path transform="translate(${x} ${y}) scale(${s})" d="M0 0 L2 -26 L-6 -42 M2 -26 L11 -46 L16 -52 M6 -36 L22 -42 M-2 -34 L-14 -46 L-18 -44 M11 -46 L6 -54" stroke="${SKY_INK}" stroke-width="3" fill="none" stroke-linecap="round"/>`;
+const pine = (x, y, h) => `<path d="M${x} ${y} l${h * 0.22} ${-h} l${h * 0.22} ${h} Z M${x + h * 0.06} ${y - h * 0.45} l${h * 0.16} ${-h * 0.45} l${h * 0.16} ${h * 0.45} Z" fill="${SKY_INK}"/>`;
+
+// Усадьба на холме.
+function houseLayer(art) {
+  return `
+  ${dist('M0 120 V82 Q110 62 230 76 Q370 54 520 70 Q630 60 720 68 V120 Z')}
+  ${moon(472, 36, art.moon === 1)}
+  ${birds(418, 30)}
+  <g fill="${SKY_INK}">
+    <path d="M180 120 V98 Q250 76 340 84 Q430 92 540 80 V120 Z"/>
+    <rect x="308" y="50" width="62" height="38"/>
+    <path d="M301 52 L339 24 L377 52 Z"/>
+    <rect x="316" y="26" width="7" height="18"/>
+    <rect x="362" y="32" width="18" height="40"/>
+    <path d="M358 34 L371 8 L384 34 Z"/>
+    <path d="M400 92 v-9 M408 91 v-9 M416 90 v-9 M424 90 v-9 M432 89 v-9 M396 86 H436" stroke="${SKY_INK}" stroke-width="1.6"/>
+    <path d="M0 120 V100 Q100 86 180 98 V120 Z"/>
+    <path d="M540 80 Q620 72 720 90 V120 H540 Z"/>
+    <path d="M62 99 v-9 a4 4 0 0 1 8 0 v9 Z M88 96 v-11 a5 5 0 0 1 10 0 v11 Z M140 98 v-8 a3.5 3.5 0 0 1 7 0 v8 Z"/>
+    <path d="M118 97 v-15 M113 87 h10" stroke="${SKY_INK}" stroke-width="2.5"/>
+  </g>
+  ${tree(240, 104, 0.95)}${tree(498, 96, 0.7)}${tree(640, 86, 0.9)}
+  ${pick(HOUSE_WINDOWS, art, (lit) => windows(HOUSE_WINDOWS, lit))}
+  <rect x="334" y="72" width="9" height="16" fill="#17140f"/>`;
+}
+
+// Ночной поезд на мосту, дым из трубы. Поезд сдвинут влево, чтобы паровоз был виден и на телефоне.
+function trainLayer(art) {
+  const cars = [60, 156, 252, 348];
+  const carBodies = cars.map((x) => `<rect x="${x}" y="62" width="90" height="22" rx="3"/>`).join('');
+  const wheels = [...cars.flatMap((x) => [x + 14, x + 76]), 470, 496, 522].map((x) => `<circle cx="${x}" cy="86" r="4"/>`).join('');
+  const panes = cars.flatMap((x) => [10, 30, 50, 70].map((dx) => [x + dx, 67]));
+  const lit = [panes[5], panes[6], panes[9], panes[10], panes[13], panes[14]];
+  return `
+  ${dist('M0 120 V86 Q140 70 280 80 Q430 66 560 76 Q650 70 720 78 V120 Z')}
+  ${moon(385, 30, art.moon === 1)}
+  <g fill="#2a2830" opacity="0.55">
+    <circle cx="530" cy="42" r="6"/><circle cx="518" cy="33" r="9"/><circle cx="500" cy="24" r="12"/><circle cx="476" cy="17" r="14"/><circle cx="448" cy="14" r="15"/>
+  </g>
+  <g fill="${SKY_INK}">
+    <rect x="0" y="88" width="720" height="5"/>
+    ${[0, 90, 180, 270, 360, 450, 540, 630].map((x) => `<path d="M${x} 93 H${x + 90} V120 H${x + 78} Q${x + 45} 98 ${x + 12} 120 H${x} Z"/>`).join('')}
+    ${carBodies}
+    <rect x="452" y="58" width="80" height="26" rx="3"/>
+    <rect x="452" y="48" width="26" height="14"/>
+    <rect x="516" y="46" width="8" height="14"/>
+    <path d="M532 84 L550 84 L538 74 Z"/>
+    ${wheels}
+    <path d="M620 88 V40 M614 46 H626 M690 88 V40 M684 46 H696" stroke="${SKY_INK}" stroke-width="2"/>
+    <path d="M560 47 Q600 54 640 49 Q680 54 720 47" stroke="${SKY_INK}" stroke-width="0.8" fill="none"/>
+  </g>
+  ${pick(lit, art, (one) => windows(panes, one, 10, 8))}
+  <rect x="458" y="52" width="10" height="7" fill="#17140f"/>`;
+}
+
+// Санаторий в соснах: колонны, крылья, купол.
+function sanatoriumLayer(art) {
+  const panes = [262, 280, 298, 316, 404, 422, 440, 458].flatMap((x) => [[x, 56], [x, 74]]);
+  const lit = [panes[2], panes[5], panes[9], panes[12], panes[14], panes[7]];
+  return `
+  ${dist('M0 120 V84 Q160 66 320 78 Q480 62 720 76 V120 Z')}
+  ${moon(530, 28, art.moon === 1)}
+  ${birds(210, 26)}
+  <g fill="${SKY_INK}">
+    <path d="M0 120 V96 Q180 88 360 92 Q540 96 720 90 V120 Z"/>
+    <rect x="250" y="48" width="220" height="46"/>
+    <rect x="200" y="62" width="50" height="32"/><rect x="470" y="62" width="50" height="32"/>
+    <rect x="326" y="40" width="68" height="54"/>
+    <path d="M320 42 L360 24 L400 42 Z"/>
+    <path d="M350 24 a10 10 0 0 1 20 0 Z"/><path d="M360 14 V6" stroke="${SKY_INK}" stroke-width="1.5"/>
+    <path d="M150 96 V84 H570 V96" stroke="${SKY_INK}" stroke-width="1.2" fill="none"/>
+    ${[160, 180, 200, 520, 540, 560].map((x) => `<path d="M${x} 96 v-12" stroke="${SKY_INK}" stroke-width="1.2"/>`).join('')}
+  </g>
+  <g fill="#121014">${[334, 350, 366, 382].map((x) => `<rect x="${x}" y="46" width="4" height="48"/>`).join('')}</g>
+  ${pine(70, 100, 60)}${pine(110, 98, 46)}${pine(560, 96, 52)}${pine(612, 98, 64)}${pine(660, 94, 40)}${pine(10, 104, 40)}
+  ${pick(lit, art, (one) => windows(panes, one, 8, 10))}`;
+}
+
+// Маяк на скале, луч над морем, домик смотрителя.
+function lighthouseLayer(art) {
+  const left = art.window % 2 === 0; // луч светит влево или вправо
+  const beam = left ? 'M420 15 L-20 -30 L-20 70 Z' : 'M420 15 L740 -30 L740 70 Z';
+  const waves = Array.from({ length: 9 }, (_, i) => `M${i * 84 - 20} ${104 + (i % 3) * 5} q10 -4 20 0 q10 4 20 0`).join(' ');
+  return `
+  <defs><linearGradient id="beam" x1="${left ? 1 : 0}" y1="0" x2="${left ? 0 : 1}" y2="0">
+    <stop offset="0" stop-color="${GOLD}" stop-opacity="0.32"/><stop offset="1" stop-color="${GOLD}" stop-opacity="0"/>
+  </linearGradient></defs>
+  ${moon(left ? 600 : 330, 30, art.moon === 1)}
+  <path d="${beam}" fill="url(#beam)"/>
+  <rect x="0" y="96" width="720" height="24" fill="#0b0c10"/>
+  <path d="${waves}" stroke="#23242c" stroke-width="1.2" fill="none"/>
+  <g fill="${SKY_INK}">
+    <path d="M290 120 L302 96 Q334 78 380 76 L470 74 Q500 80 522 96 L540 120 Z"/>
+    <path d="M407 76 L413 26 H427 L433 76 Z"/>
+    <rect x="409" y="22" width="22" height="4"/>
+    <path d="M412 12 L420 3 L428 12 Z"/>
+    <rect x="452" y="62" width="30" height="14"/><path d="M448 63 L467 52 L486 63 Z"/>
+    <path d="M150 104 q20 -14 40 0 Z M600 100 q26 -18 52 0 Z M80 108 q12 -8 24 0 Z"/>
+    <path d="M210 102 h34 l-6 6 h-22 Z M226 102 V88 L238 100 Z"/>
+    <path d="M520 100 V92 M520 96 H556 M556 100 V92" stroke="${SKY_INK}" stroke-width="2"/>
+  </g>
+  <circle cx="420" cy="17" r="20" fill="url(#lamp)"/>
+  <rect x="414" y="12" width="12" height="10" fill="${GOLD}"/>
+  <path d="M420 12v10" stroke="${SKY_INK}" stroke-width="0.8"/>
+  ${art.window % 3 === 0 ? `<rect x="461" y="66" width="7" height="7" fill="${GOLD}"/>` : `<rect x="461" y="66" width="7" height="7" fill="#17140f"/>`}`;
+}
+
+const LAYERS = { house: houseLayer, train: trainLayer, sanatorium: sanatoriumLayer, lighthouse: lighthouseLayer };
+
+export function scene(theme = 'house', art = { window: 0, moon: 0, weather: 0 }) {
   return `<svg class="house" viewBox="0 0 720 120" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
@@ -226,37 +346,13 @@ export function house(art = { window: 0, moon: 0, weather: 0 }) {
   </defs>
   <rect width="720" height="120" fill="url(#sky)"/>
   <g fill="#cfc6b6" opacity="0.45">${STARS.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.8"/>`).join('')}</g>
-  <path d="M0 120 V82 Q110 62 230 76 Q370 54 520 70 Q630 60 720 68 V120 Z" fill="#131116"/>
-  <g transform="translate(180 0)">
-    <circle cx="292" cy="36" r="46" fill="url(#glow)"/>
-    ${moon}
-    <path d="M238 30 q4 -4 8 0 q4 -4 8 0 M258 46 q3 -3 6 0 q3 -3 6 0" stroke="#050404" stroke-width="1.4" fill="none"/>
-    <g fill="#050404">
-      <path d="M0 120 V98 Q70 76 160 84 Q250 92 360 80 V120 Z"/>
-      <rect x="128" y="50" width="62" height="38"/>
-      <path d="M121 52 L159 24 L197 52 Z"/>
-      <rect x="136" y="26" width="7" height="18"/>
-      <rect x="182" y="32" width="18" height="40"/>
-      <path d="M178 34 L191 8 L204 34 Z"/>
-      <path d="M60 104 L62 74 L54 58 M62 74 L71 54 L76 48 M66 64 L82 58 M58 66 L46 54 L42 56 M71 54 L66 46" stroke="#050404" stroke-width="3" fill="none" stroke-linecap="round"/>
-      <path d="M318 96 L319 78 L313 68 M319 78 L326 66 M322 72 L332 70" stroke="#050404" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-      <path d="M220 92 v-9 M228 91 v-9 M236 90 v-9 M244 90 v-9 M252 89 v-9 M216 86 H256" stroke="#050404" stroke-width="1.6"/>
-    </g>
-    <g fill="#17140f">${dark}<rect x="154" y="72" width="9" height="16"/></g>
-    <circle cx="${lx + lw / 2}" cy="${ly + lh / 2}" r="14" fill="url(#lamp)"/>
-    <rect x="${lx}" y="${ly}" width="${lw}" height="${lh}" fill="${GOLD}"/>
-    <path d="M${lx + lw / 2} ${ly}v${lh}M${lx} ${ly + lh / 2}h${lw}" stroke="#050404" stroke-width="0.8"/>
-  </g>
-  <g fill="#050404">
-    <path d="M0 120 V100 Q100 86 180 98 V120 Z"/>
-    <path d="M540 80 Q620 72 720 90 V120 H540 Z"/>
-    <path d="M62 99 v-9 a4 4 0 0 1 8 0 v9 Z M88 96 v-11 a5 5 0 0 1 10 0 v11 Z M140 98 v-8 a3.5 3.5 0 0 1 7 0 v8 Z"/>
-    <path d="M118 97 v-15 M113 87 h10" stroke="#050404" stroke-width="2.5"/>
-    <path d="M640 86 L642 62 L634 48 M642 62 L652 44 L656 40 M646 54 L660 48 M638 56 L626 46" stroke="#050404" stroke-width="2.6" fill="none" stroke-linecap="round"/>
-  </g>
+  ${(LAYERS[theme] ?? houseLayer)(art)}
   ${weather(art.weather)}
 </svg>`;
 }
+
+// Прежнее имя — дом на холме.
+export const house = (art) => scene('house', art);
 
 // Штамп «CASE 404» — логотип; ставится в угол картинки с домом, как печать на фото из дела.
 export const STAMP = `<svg class="stamp-logo" viewBox="0 0 260 110" aria-label="case404">

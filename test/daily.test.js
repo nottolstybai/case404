@@ -35,11 +35,25 @@ test('вступления и признания не повторяются 12 
 });
 
 test('главная улика не спорит со вступлением', async () => {
-  const { STORY } = await import('../src/text.js');
+  const { THEMES } = await import('../src/themes.js');
   for (let d = 1; d <= 60; d++) {
     const key = new Date(Date.UTC(2026, 10, d)).toISOString().slice(0, 10);
     const p = dailyPuzzle(key);
-    const main = STORY.main[p.categories[p.culpritClue.k].key][p.story.main];
-    if (main.body) assert.notEqual(STORY.intros[p.story.intro].body, false, key);
+    const theme = THEMES[p.theme];
+    const main = theme.main[p.categories[p.culpritClue.k].key][p.story.main];
+    if (main.body) assert.notEqual(theme.intros[p.story.intro].body, false, key);
   }
+});
+
+test('темы идут по очереди, подозреваемые подходят к месту', async () => {
+  const { THEMES, THEME_KEYS } = await import('../src/themes.js');
+  const seen = new Set();
+  for (let d = 1; d <= 8; d++) {
+    const p = dailyPuzzle(`2026-11-${String(d).padStart(2, '0')}`);
+    seen.add(p.theme);
+    for (const s of p.suspects) assert.ok(!THEMES[p.theme].skipRoles.includes(s.role), `${p.theme}: ${s.role}`);
+    const places = THEMES[p.theme].places.map((x) => x.name);
+    for (const v of p.categories[1].values) assert.ok(places.includes(v.name), `${p.theme}: ${v.name}`);
+  }
+  assert.equal(seen.size, THEME_KEYS.length);
 });

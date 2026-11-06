@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SUSPECTS } from '../src/suspects.js';
-import { ITEMS, PLACES } from '../src/puzzle.js';
-import { ROLES, house, portrait } from '../src/art.js';
+import { THEMES } from '../src/themes.js';
+import { ROLES, portrait, scene } from '../src/art.js';
 
 test('у каждой роли есть силуэт, роли не повторяются', () => {
   const roles = SUSPECTS.map((s) => s.role);
@@ -18,20 +18,42 @@ test('имена уникальны, падежи заполнены', () => {
   }
 });
 
-test('комнаты и предметы помещаются в кнопку и имеют все формы', () => {
-  for (const p of PLACES) assert.ok(p.name.length <= 9 && p.loc && p.to, p.name);
-  for (const i of ITEMS) assert.ok(i.name.length <= 9 && i.acc, i.name);
-  assert.equal(new Set(PLACES.map((p) => p.name)).size, PLACES.length);
-  assert.equal(new Set(ITEMS.map((i) => i.name)).size, ITEMS.length);
+test('места и предметы каждой темы помещаются в кнопку и имеют все формы', () => {
+  for (const [key, theme] of Object.entries(THEMES)) {
+    const { places, items } = theme;
+    for (const p of places) assert.ok(p.name.length <= 9 && p.loc && p.to, `${key}: ${p.name}`);
+    for (const i of items) assert.ok(i.name.length <= 9 && i.acc, `${key}: ${i.name}`);
+    assert.equal(new Set(places.map((p) => p.name)).size, places.length, key);
+    assert.equal(new Set(items.map((i) => i.name)).size, items.length, key);
+    assert.ok(places.length >= 8 && items.length >= 8, key);
+    assert.ok(SUSPECTS.filter((s) => !theme.skipRoles.includes(s.role)).length >= 10, key);
+  }
 });
 
-test('картинка дня собирается при любых настройках', () => {
-  for (let window = 0; window < 6; window++) {
-    for (let moon = 0; moon < 2; moon++) {
-      for (let weather = 0; weather < 4; weather++) {
-        const svg = house({ window, moon, weather });
-        assert.match(svg, /^<svg[\s\S]*<\/svg>$/);
-        assert.doesNotMatch(svg, /undefined|NaN/);
+test('у каждой темы есть вступления и главные улики для всех категорий', () => {
+  for (const [key, theme] of Object.entries(THEMES)) {
+    assert.ok(theme.intros.length >= 6, key);
+    assert.ok(theme.intros.some((i) => i.body === false), `${key}: нужно и вступление без тела`);
+    for (const cat of ['time', 'place', 'item']) {
+      const list = theme.main[cat];
+      assert.ok(list.some((m) => !m.body), `${key}/${cat}: нужна улика, которая подходит к любому вступлению`);
+      for (const m of list) {
+        const text = m.text({ name: 'X', acc: 'X', loc: 'в X', to: 'в X' });
+        assert.match(text, /^[А-ЯЁ«].*[.»]$/, `${key}/${cat}: ${text}`);
+      }
+    }
+  }
+});
+
+test('картинка дня собирается для каждой темы при любых настройках', () => {
+  for (const theme of Object.keys(THEMES)) {
+    for (let window = 0; window < 6; window++) {
+      for (let moon = 0; moon < 2; moon++) {
+        for (let weather = 0; weather < 4; weather++) {
+          const svg = scene(theme, { window, moon, weather });
+          assert.match(svg, /^<svg[\s\S]*<\/svg>$/);
+          assert.doesNotMatch(svg, /undefined|NaN/);
+        }
       }
     }
   }
