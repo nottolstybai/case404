@@ -58,6 +58,7 @@ test('имена и предметы узнаются в разных падеж
 test('очистка ответа', () => {
   assert.equal(clean('  «Текст истории.»  '), 'Текст истории.');
   assert.equal(clean('Раз.\n\n\nДва.'), 'Раз.\nДва.');
+  assert.equal(clean('Она сказала: "Я ни при чём." И ушла.'), 'Она сказала: «Я ни при чём.» И ушла.');
 });
 
 test('все места и предметы всех тем узнаются в тексте', async () => {
@@ -93,7 +94,10 @@ test('проверка фактов: чужое время или место в 
   const swap = `${base} ${other.person.name} пришёл в ${culprit.time.name}.`;
   assert.ok(validate(swap, p).problems.some((x) => x.includes('приписано не тому')));
   const before = `${base} ${other.person.name} оставался там до ${other.time.name}.`;
-  assert.ok(validate(before, p).problems.some((x) => x.startsWith('«до ЧЧ:ММ»')));
+  assert.ok(validate(before, p).problems.some((x) => x.startsWith('«до/к/с ЧЧ:ММ»')));
+  for (const phrase of [`к ${other.time.name}`, `с ${other.time.name}`]) {
+    assert.ok(validate(`${base} ${other.person.name} был там ${phrase}.`, p).problems.some((x) => x.startsWith('«до/к/с')), phrase);
+  }
   const fair = `${base} ${other.person.name} пришёл в ${other.time.name} и был ${other.place.loc}.`;
   assert.deepEqual(validate(fair, p).problems, []);
 });

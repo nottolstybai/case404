@@ -210,6 +210,7 @@ async function generateText(puzzle) {
     const { ok, problems } = validate(text, puzzle);
     if (ok) return { text, model: model.name };
     console.warn(`  ${model.name}: не прошла проверку — ${problems.join('; ')}`);
+    console.warn(`    текст: ${text.replace(/\s+/g, ' ').slice(0, 600)}`);
   }
   if (!answered) throw new Error('ни одна модель не ответила');
   return null;

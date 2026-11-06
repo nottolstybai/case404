@@ -111,7 +111,8 @@ export function validate(text, puzzle) {
   if (!/^[«"—–-]?\s*[А-ЯЁ]/.test(text.trim())) problems.push('начинается не с заглавной буквы');
   if (!/[.!?…»"]$/.test(text.trim())) problems.push('оборвано: нет точки в конце');
   if ((text.match(/\n/g) ?? []).length > 3) problems.push('слишком много строк');
-  if (/(^|[^а-яё])до \d{1,2}:\d{2}/i.test(text)) problems.push('«до ЧЧ:ММ» — время означает момент прихода');
+  // время — момент прихода: «до 20:40», «к 20:30», «с 20:00» меняют смысл
+  if (/(^|[^а-яё])(до|к|с|со) \d{1,2}:\d{2}/i.test(text)) problems.push('«до/к/с ЧЧ:ММ» — время означает момент прихода');
   problems.push(...swapped(text, puzzle));
   return { ok: problems.length === 0, problems };
 }
@@ -177,6 +178,7 @@ export function looseStory(text) {
 // Привести ответ к простому тексту: убрать кавычки вокруг и лишние пробелы.
 export const clean = (text) =>
   text
+    .replace(/"([^"\n]+)"/g, '«$1»') // прямые кавычки → «ёлочки»
     .trim()
     .replace(/^[«"]|[»"]$/g, '')
     .replace(/\s+\n/g, '\n')
