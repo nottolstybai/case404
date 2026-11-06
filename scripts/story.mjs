@@ -24,19 +24,20 @@ const outDir = option('--out') ?? 'stories';
 const mock = flag('--mock');
 const force = flag('--force') || process.env.FORCE === 'true';
 const key = process.env.GEMINI_API_KEY;
-// Порядок моделей: заданная, потом известные Flash. Если модель перегружена (503) — ждём и пробуем снова,
-// потом берём следующую.
+// Порядок моделей: заданная, потом Flash, потом Flash Lite (у Lite своя квота и меньше нагрузка).
+// Бесплатная квота — около 20 запросов в день на модель, поэтому повторяем бережно:
+// перегружена (503) — одна повторная попытка; кончилась квота (429) — к этой модели больше не обращаемся.
 const MODELS = [
   process.env.GEMINI_MODEL,
   'gemini-3.8-flash',
   'gemini-3.5-flash',
-  'gemini-flash-latest',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
 ].filter(Boolean);
 const ATTEMPTS = 3; // сколько раз просить историю, если ответ не прошёл проверку
-const RETRIES = 3; // сколько раз повторять запрос к перегруженной модели
-const RETRYABLE = new Set([429, 500, 502, 503, 504, 598, 599]); // 598 — таймаут, 599 — пустой ответ
+const RETRIES = 2; // сколько раз пробовать перегруженную модель
+const RETRYABLE = new Set([500, 502, 503, 504, 598, 599]); // 598 — таймаут, 599 — пустой ответ
+const skip = new Set(); // модели, которые в этом запуске больше не трогаем (нет такой, кончилась квота)
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function dates() {
@@ -85,6 +86,8 @@ async function ask(model, prompt) {
     } catch {
       // оставим как есть
     }
+    const retryIn = message.match(/retry in ([\dhms]+)/)?.[1];
+    message = message.split('\n')[0] + (retryIn ? ` (снова можно через ${retryIn})` : '');
     throw fail(`${model}: HTTP ${response.status} ${message}`, response.status);
   }
   const data = await response.json();
@@ -105,11 +108,12 @@ async function ask(model, prompt) {
 
 let workingModel = null;
 
-// Получить текст от первой модели, которая ответит.
+// Получить текст от первой модели, которая ответит. Если не ответила ни одна — ошибка,
+// и запуск останавливается: остальные даты допишет следующий запуск.
 async function askAny(prompt) {
-  const models = workingModel ? [workingModel, ...MODELS.filter((m) => m !== workingModel)] : MODELS;
+  const order = workingModel ? [workingModel, ...MODELS.filter((m) => m !== workingModel)] : MODELS;
   let last;
-  for (const model of models) {
+  for (const model of order.filter((m) => !skip.has(m))) {
     for (let retry = 0; retry < RETRIES; retry++) {
       try {
         const text = clean(await ask(model, prompt));
@@ -118,13 +122,16 @@ async function askAny(prompt) {
       } catch (error) {
         last = error;
         console.warn(`  ${error.message}`);
-        if (error.status === 400 || error.status === 404) break; // нет такой модели — следующая
-        if (!RETRYABLE.has(error.status)) throw error; // например, ключ не подходит — дальше смысла нет
-        if (retry < RETRIES - 1) await sleep(10_000 * (retry + 1)); // 10 с, 20 с
+        if ([400, 403, 404, 429].includes(error.status)) {
+          skip.add(model); // нет такой модели, нет доступа или кончилась квота — повторять бесполезно
+          break;
+        }
+        if (!RETRYABLE.has(error.status)) throw error;
+        if (retry < RETRIES - 1) await sleep(20_000);
       }
     }
   }
-  throw last ?? new Error('ни одна модель не ответила');
+  throw new Error(`Gemini сейчас недоступен (${last?.message ?? 'все модели пропущены'})`);
 }
 
 async function generateText(puzzle) {
@@ -165,10 +172,8 @@ async function main() {
     } catch (error) {
       failed++;
       console.error(`${date}: ${error.message}`);
-      if (RETRYABLE.has(error.status)) {
-        console.error('Gemini перегружен — остальные даты попробуем при следующем запуске.');
-        break;
-      }
+      console.error('Остальные даты допишет следующий запуск.');
+      break;
     }
   }
   if (failed) process.exitCode = 1;
