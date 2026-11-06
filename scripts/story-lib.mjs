@@ -140,6 +140,40 @@ function swapped(text, puzzle) {
   return problems;
 }
 
+// Текст ответа Interactions API (через него Google даёт Gemma).
+// По справке API текст лежит в steps[type=model_output].content[type=text].text,
+// в части примеров документации — в outputs[type=text].text; понимаем оба вида.
+export function interactionText(data) {
+  const fromSteps = (data.steps ?? [])
+    .filter((s) => s.type === 'model_output')
+    .flatMap((s) => s.content ?? [])
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text ?? '')
+    .join('');
+  if (fromSteps) return fromSteps;
+  return (data.outputs ?? [])
+    .filter((o) => o.type === 'text')
+    .map((o) => o.text ?? '')
+    .join('');
+}
+
+// Мягко достать историю: JSON {"story": "…"} (можно в ```json … ```) или просто текст без фигурных скобок.
+// null — разобрать не получилось. Годится ли сам текст, решает validate().
+export function looseStory(text) {
+  const unfenced = text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+  const start = unfenced.indexOf('{');
+  const end = unfenced.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      const story = JSON.parse(unfenced.slice(start, end + 1)).story;
+      if (typeof story === 'string' && story.trim()) return story;
+    } catch {
+      // не JSON — ниже
+    }
+  }
+  return unfenced && !unfenced.includes('{') ? unfenced : null;
+}
+
 // Привести ответ к простому тексту: убрать кавычки вокруг и лишние пробелы.
 export const clean = (text) =>
   text

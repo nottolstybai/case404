@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { caseId, dailyPuzzle, isDateKey } from '../src/daily.js';
-import { buildPrompt, clean, mockStory, validate } from './story-lib.mjs';
+import { buildPrompt, clean, interactionText, looseStory, mockStory, validate } from './story-lib.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -28,8 +28,12 @@ const mock = flag('--mock');
 const force = flag('--force') || process.env.FORCE === 'true';
 const geminiKey = process.env.GEMINI_API_KEY;
 
-// Порядок моделей Gemini; у каждой своя бесплатная суточная квота (сброс в полночь по тихоокеанскому времени).
-const MODEL_ORDER = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash'];
+// Порядок моделей; у каждой своя бесплатная суточная квота (сброс в полночь по тихоокеанскому времени).
+// Gemma — запасной вариант на том же ключе. Для проверки порядок можно задать: STORY_MODELS=gemma-4-31b-it
+const DEFAULT_ORDER = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'];
+const MODEL_ORDER = process.env.STORY_MODELS?.trim()
+  ? process.env.STORY_MODELS.split(',').map((m) => m.trim()).filter(Boolean)
+  : DEFAULT_ORDER;
 
 function dates() {
   const one = option('--date');
@@ -120,7 +124,32 @@ async function askGemini(model, prompt) {
   return storyFrom(model, text);
 }
 
-const MODELS = geminiKey ? MODEL_ORDER.map((name) => ({ name, ask: askGemini })) : [];
+// Gemma 4 — через Interactions API: так её подключает документация Google
+// (для generateContent Gemma не описана). JSON-режим для Gemma не документирован,
+// поэтому JSON просим словами в промпте и разбираем ответ мягко; дальше — та же проверка.
+async function askGemma(model, prompt) {
+  const data = await post(
+    model,
+    'https://generativelanguage.googleapis.com/v1beta/interactions',
+    { 'x-goog-api-key': geminiKey },
+    {
+      model,
+      input: prompt,
+      generation_config: { max_output_tokens: 2048 },
+      store: false, // по умолчанию Interactions API хранит запросы — нам это не нужно
+    },
+  );
+  if (data.status && data.status !== 'completed') throw fail(`${model}: ответ не закончен (${data.status})`, 599);
+  const text = interactionText(data);
+  if (!text) throw fail(`${model}: пустой ответ`, 599);
+  const story = looseStory(text);
+  if (!story) throw fail(`${model}: не удалось разобрать ответ: ${text.slice(0, 60)}`, 599);
+  return story;
+}
+
+const MODELS = geminiKey
+  ? MODEL_ORDER.map((name) => ({ name, ask: name.startsWith('gemma-') ? askGemma : askGemini }))
+  : [];
 const broken = new Set(); // модели, ответившие ошибкой: в этом запуске к ним больше не обращаемся
 
 // Каждой модели по одному запросу, по порядку; первая история, прошедшая проверку, — наша.

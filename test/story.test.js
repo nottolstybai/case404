@@ -111,3 +111,26 @@ test('у соседних дней разные приёмы рассказа', 
   assert.notEqual(angle('2026-11-06'), angle('2026-11-07'));
   assert.ok(angle('2026-11-06'));
 });
+
+test('ответ Interactions API (Gemma): текст в steps или outputs', async () => {
+  const { interactionText } = await import('../scripts/story-lib.mjs');
+  const steps = {
+    status: 'completed',
+    steps: [
+      { type: 'thought', content: [{ type: 'text', text: 'размышления' }] },
+      { type: 'model_output', content: [{ type: 'text', text: '{"story": "Раз."}' }] },
+    ],
+  };
+  assert.equal(interactionText(steps), '{"story": "Раз."}');
+  assert.equal(interactionText({ outputs: [{ type: 'text', text: 'Два.' }] }), 'Два.');
+  assert.equal(interactionText({ status: 'completed' }), '');
+});
+
+test('мягкий разбор ответа: JSON, JSON в ```json, просто текст, мусор', async () => {
+  const { looseStory } = await import('../scripts/story-lib.mjs');
+  assert.equal(looseStory('{"story": "Текст."}'), 'Текст.');
+  assert.equal(looseStory('```json\n{"story": "Текст."}\n```'), 'Текст.');
+  assert.equal(looseStory('Вот история:\n{"story": "Текст."}'), 'Текст.');
+  assert.equal(looseStory('Просто история без скобок.'), 'Просто история без скобок.');
+  assert.equal(looseStory('{"story": сломано'), null);
+});
