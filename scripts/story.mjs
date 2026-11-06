@@ -23,8 +23,13 @@ const outDir = option('--out') ?? 'stories';
 const mock = flag('--mock');
 const force = flag('--force');
 const key = process.env.GEMINI_API_KEY;
-const MODELS = [process.env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.5-flash'].filter(Boolean);
-const ATTEMPTS = 3;
+// Порядок моделей: заданная, потом известные Flash. Если модель перегружена (503) — ждём и пробуем снова,
+// потом берём следующую.
+const MODELS = [process.env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'].filter(Boolean);
+const ATTEMPTS = 3; // сколько раз просить историю, если ответ не прошёл проверку
+const RETRIES = 3; // сколько раз повторять запрос к перегруженной модели
+const RETRYABLE = new Set([429, 500, 502, 503, 504, 598, 599]); // 598 — таймаут, 599 — пустой ответ
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function dates() {
   const one = option('--date');
@@ -36,44 +41,72 @@ function dates() {
   return [-1, 0, 1, 2].map(day);
 }
 
+function fail(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 async function ask(model, prompt) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.9, maxOutputTokens: 2048 },
-    }),
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.9, maxOutputTokens: 2048 },
+      }),
+      signal: AbortSignal.timeout(90_000),
+    });
+  } catch (error) {
+    throw fail(`${model}: нет ответа (${error.name})`, 598);
+  }
   if (!response.ok) {
-    const error = new Error(`${model}: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`);
-    error.status = response.status;
-    throw error;
+    const body = await response.text();
+    let message = body.slice(0, 200);
+    try {
+      message = JSON.parse(body).error.message;
+    } catch {
+      // оставим как есть
+    }
+    throw fail(`${model}: HTTP ${response.status} ${message}`, response.status);
   }
   const data = await response.json();
   const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-  if (!text) throw new Error(`${model}: пустой ответ (${data.candidates?.[0]?.finishReason ?? 'нет кандидатов'})`);
+  if (!text) throw fail(`${model}: пустой ответ (${data.candidates?.[0]?.finishReason ?? 'нет кандидатов'})`, 599);
   return text;
 }
 
 let workingModel = null;
 
+// Получить текст от первой модели, которая ответит.
+async function askAny(prompt) {
+  const models = workingModel ? [workingModel, ...MODELS.filter((m) => m !== workingModel)] : MODELS;
+  let last;
+  for (const model of models) {
+    for (let retry = 0; retry < RETRIES; retry++) {
+      try {
+        const text = clean(await ask(model, prompt));
+        workingModel = model;
+        return text;
+      } catch (error) {
+        last = error;
+        console.warn(`  ${error.message}`);
+        if (error.status === 400 || error.status === 404) break; // нет такой модели — следующая
+        if (!RETRYABLE.has(error.status)) throw error; // например, ключ не подходит — дальше смысла нет
+        if (retry < RETRIES - 1) await sleep(10_000 * (retry + 1)); // 10 с, 20 с
+      }
+    }
+  }
+  throw last ?? new Error('ни одна модель не ответила');
+}
+
 async function generateText(puzzle) {
   const prompt = buildPrompt(puzzle);
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    let text;
-    for (const model of workingModel ? [workingModel] : MODELS) {
-      try {
-        text = clean(await ask(model, prompt));
-        workingModel = model;
-        break;
-      } catch (error) {
-        console.warn(`  ${error.message}`);
-        if (error.status !== 404 && error.status !== 400) throw error; // не та модель — пробуем следующую
-      }
-    }
-    if (!text) throw new Error('ни одна модель не ответила');
+    const text = await askAny(prompt);
     const { ok, problems } = validate(text, puzzle);
     if (ok) return { text, model: workingModel };
     console.warn(`  попытка ${attempt}: ${problems.join('; ')}`);
@@ -108,6 +141,10 @@ async function main() {
     } catch (error) {
       failed++;
       console.error(`${date}: ${error.message}`);
+      if (RETRYABLE.has(error.status)) {
+        console.error('Gemini перегружен — остальные даты попробуем при следующем запуске.');
+        break;
+      }
     }
   }
   if (failed) process.exitCode = 1;
