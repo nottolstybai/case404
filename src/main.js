@@ -5,12 +5,16 @@ import { CHECK, CROSS, accuse, accuseCategories, giveUp, hint, isOver, newGame, 
 import { STORY, clueText, confessionText, mainClueText, rulesText, valueName } from './text.js';
 import { STAMP, house, portrait } from './art.js';
 import { hashString } from './rng.js';
+import { clock, plural, record, shareText, solvedCount, streak, untilMidnight } from './stats.js';
 
 const params = new URLSearchParams(location.search);
 const key = isDateKey(params.get('date')) ? params.get('date') : dateKey(); // ?date=2026-11-06 — для проверки
 const puzzle = dailyPuzzle(key);
 const SAVE = `case-file:${key}`;
 const SETTINGS = 'case-file:settings';
+const STATS = 'case-file:stats';
+// серия считается только для настоящего сегодняшнего дела, не для ?date=
+const isToday = key === dateKey();
 const n = puzzle.suspects.length;
 
 const storage = {
@@ -49,11 +53,18 @@ const save = () => storage.set(SAVE, game);
 const saveSettings = () => storage.set(SETTINGS, settings);
 const cap = (text) => text[0].toUpperCase() + text.slice(1);
 
-function clock(seconds) {
-  const m = Math.floor(seconds / 60);
-  const s = String(seconds % 60).padStart(2, '0');
-  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${s}` : `${String(m).padStart(2, '0')}:${s}`;
+let stats = storage.get(STATS) ?? {};
+let shareNote = ''; // «Скопировано» после «Поделиться»
+
+// Записать результат дня, когда дело закрыто (раскрыто или игрок сдался).
+function recordResult() {
+  if (!isToday || !isOver(game)) return;
+  const next = record(stats, puzzle.number, game);
+  if (next !== stats) storage.set(STATS, (stats = next));
 }
+recordResult(); // дело могло быть закрыто до появления статистики
+
+const shareUrl = () => `${location.origin}${location.pathname}`;
 
 const highlighted = (g, k, v) => hintNow?.cells.some(([a, b, c]) => a === g && b === k && c === v);
 
@@ -204,8 +215,24 @@ function resultSheet() {
       <span>Неверных обвинений: ${game.wrong}</span>
       <span>Подсказок: ${game.hints}</span>
     </div>
-    <p class="sub" style="margin-top:16px">Следующее дело — завтра.</p>
-    <div class="actions"><button class="btn" data-act="close-sheet">К делу</button></div>`);
+    ${isToday ? recordBlock() : ''}
+    <div class="actions">
+      <button class="btn" data-act="close-sheet">К делу</button>
+      <button class="btn primary" data-act="share">Поделиться</button>
+    </div>
+    <p class="share-note">${shareNote}</p>`);
+}
+
+// Серия и отсчёт до следующего дела.
+function recordBlock() {
+  const days = streak(stats, puzzle.number);
+  const total = solvedCount(stats);
+  return `
+    <div class="record">
+      <div><b>${days}</b><span>${plural(days, 'день', 'дня', 'дней')} подряд</span></div>
+      <div><b>${total}</b><span>${plural(total, 'дело', 'дела', 'дел')} раскрыто</span></div>
+      <div><b id="countdown">${untilMidnight()}</b><span>до нового дела</span></div>
+    </div>`;
 }
 
 const SHEETS = { help: helpSheet, accuse: accuseSheet, giveup: giveUpSheet, result: resultSheet };
@@ -323,6 +350,7 @@ const actions = {
     if (accuse(game, puzzle, draft)) {
       sheet = 'result';
       hintNow = null;
+      recordResult();
     } else {
       accuseError = `Не сходится. Неверных обвинений: ${game.wrong}.`;
     }
@@ -334,6 +362,7 @@ const actions = {
     giveUp(game);
     sheet = 'result';
     hintNow = null;
+    recordResult();
   },
   'close-sheet'(el, event) {
     // клик по затемнению закрывает лист, клик внутри листа — нет
@@ -346,6 +375,25 @@ const actions = {
   },
   'show-result'() {
     sheet = 'result';
+    shareNote = '';
+  },
+  share() {
+    const text = shareText({ number: puzzle.number, game, streak: isToday ? streak(stats, puzzle.number) : 0, url: shareUrl() });
+    if (navigator.share) {
+      navigator.share({ text }).catch(() => {});
+      return false;
+    }
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        shareNote = 'Скопировано — можно вставить в чат.';
+        render();
+      },
+      () => {
+        shareNote = text;
+        render();
+      },
+    );
+    return false;
   },
 };
 
@@ -368,6 +416,8 @@ app.addEventListener('change', (event) => {
 
 // Секундомер идёт, только пока страница открыта и дело не закрыто.
 setInterval(() => {
+  const countdown = document.getElementById('countdown');
+  if (countdown) countdown.textContent = untilMidnight();
   if (isOver(game) || document.hidden || sheet === 'help') return;
   game.elapsed++;
   const timer = document.getElementById('timer');

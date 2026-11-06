@@ -337,3 +337,14 @@ button:disabled { opacity: 0.4; cursor: default; }
   .overlay { align-items: center; }
   .sheet { border: 1px solid var(--line); border-top: 2px solid var(--red); }
 }
+
+/* итог: серия и отсчёт */
+.record { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 16px 0 0; }
+.record div { border: 1px solid var(--line); background: var(--panel-2); padding: 10px 6px; text-align: center; }
+.record b { display: block; font-size: 22px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.record span { display: block; margin-top: 4px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.share-note { margin: 10px 0 0; font-family: var(--mono); font-size: 13px; color: var(--muted); white-space: pre-line; min-height: 1em; }
+
+/* улики: текст пропорциональным шрифтом — короче строки; номер остаётся «машинописным» */
+.clue { font-family: var(--serif); font-size: 15px; }
+.clue .num { font-family: var(--mono); font-size: 13px; padding-top: 2px; }
