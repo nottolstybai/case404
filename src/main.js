@@ -69,15 +69,19 @@ const shareUrl = () => `${location.origin}${location.pathname}`;
 const escapeHtml = (text) =>
   text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-// История дела от Gemini: stories/<дата>.json пишет GitHub Action раз в день.
-// Загружаем один раз, когда дело закрыто; показываем, только если она про это самое дело.
-const STORY_KEY = `case-file:story:${key}`;
-let story = storage.get(STORY_KEY);
-if (story?.id !== id) story = null;
+// История дела: stories/<дата>.json пишет GitHub Action. Загружаем при каждом открытии страницы,
+// когда дело закрыто (один маленький запрос к файлу): историю могут переписать — показываем свежую.
+// Раньше история запоминалась в браузере и после замены файла оставалась старой; чистим ту запись.
+try {
+  localStorage.removeItem(`case-file:story:${key}`);
+} catch {
+  // нет доступа к хранилищу — не беда
+}
+let story = null;
 let storyRequested = false;
 
 async function loadStory() {
-  if (story || storyRequested) return;
+  if (storyRequested) return;
   storyRequested = true;
   try {
     const response = await fetch(`stories/${key}.json`, { cache: 'no-cache' });
@@ -85,7 +89,6 @@ async function loadStory() {
     const data = await response.json();
     if (data.id !== id || typeof data.text !== 'string') return;
     story = { id, text: data.text };
-    storage.set(STORY_KEY, story);
     if (sheet === 'result') render();
   } catch {
     // истории нет — итог покажем без неё
