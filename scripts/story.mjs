@@ -70,7 +70,11 @@ async function post(name, url, headers, body) {
       // оставим как есть
     }
     const retryIn = message.match(/retry in ([\dhms]+)/)?.[1];
-    message = message.split('\n')[0] + (retryIn ? ` (снова можно через ${retryIn})` : '');
+    const limit = message.match(/limit: (\d+)/)?.[1]; // суточный лимит модели, если Google его назвал
+    message =
+      message.split('\n')[0].replace(/ For more information.*$/, '') +
+      (limit ? ` Лимит: ${limit} в день.` : '') +
+      (retryIn ? ` Снова можно через ${retryIn}.` : '');
     throw fail(`${name}: HTTP ${response.status} ${message}`, response.status);
   }
   const text = await response.text();
