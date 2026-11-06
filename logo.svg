@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 110" width="300" height="110">
+  <!-- Логотип case404: штамп; буквы нарисованы линиями, чтобы не зависеть от шрифтов -->
+  <filter id="ink"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="2.5"/></filter>
+  <g transform="rotate(-5 150 55)" filter="url(#ink)" fill="none" stroke="#c0392b" stroke-linecap="square">
+    <rect x="18" y="22" width="264" height="66" stroke-width="4.5"/>
+    <rect x="26" y="30" width="248" height="50" stroke-width="1.5"/>
+    <g transform="translate(40 37) scale(1.1)" stroke-width="3.2">
+      <path d="M18 4 H7 Q2 4 2 9 V21 Q2 26 7 26 H18"/>
+      <path transform="translate(26 0)" d="M2 26 L10 4 L18 26 M5 18 H15"/>
+      <path transform="translate(52 0)" d="M18 4 H7 Q2 4 2 9 V10 Q2 15 7 15 H13 Q18 15 18 20 V21 Q18 26 13 26 H2"/>
+      <path transform="translate(78 0)" d="M18 4 H2 V26 H18 M2 15 H14"/>
+      <path transform="translate(130 0)" d="M14 4 V26 M14 4 L2 19 H18"/>
+      <rect transform="translate(156 0)" x="2" y="4" width="16" height="22" rx="6"/>
+      <path transform="translate(182 0)" d="M14 4 V26 M14 4 L2 19 H18"/>
+    </g>
+  </g>
+</svg>
