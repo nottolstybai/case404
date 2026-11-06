@@ -1,6 +1,6 @@
 // Экран дела: история, улики, карточки подозреваемых, подсказка, обвинение.
 
-import { dailyPuzzle, dateKey, dateLabel, isDateKey } from './daily.js';
+import { caseId, dailyPuzzle, dateKey, dateLabel, isDateKey } from './daily.js';
 import { CHECK, CROSS, accuse, accuseCategories, giveUp, hint, isOver, newGame, tap, toggleClue, undo } from './game.js';
 import { clueText, confessionText, introText, mainClueText, rulesText, themeTitle, valueName } from './text.js';
 import { STAMP, portrait, scene } from './art.js';
@@ -35,9 +35,9 @@ const storage = {
 };
 
 // Отпечаток дела: если генератор изменится, старые отметки к новому делу не подойдут.
-const caseId = hashString(JSON.stringify([puzzle.solution, puzzle.clues, puzzle.culprit, puzzle.culpritClue]));
+const id = caseId(puzzle);
 const saved = storage.get(SAVE);
-let game = saved?.id === caseId ? { ...newGame(puzzle), ...saved } : { ...newGame(puzzle), id: caseId };
+let game = saved?.id === id ? { ...newGame(puzzle), ...saved } : { ...newGame(puzzle), id };
 let settings = { easy: false, seenHelp: false, cluesOpen: true, ...storage.get(SETTINGS) };
 let hintNow = null; // { text, cells, clue }
 let mode = CROSS; // что ставит тап: ✗ или ✓
@@ -65,6 +65,32 @@ function recordResult() {
 recordResult(); // дело могло быть закрыто до появления статистики
 
 const shareUrl = () => `${location.origin}${location.pathname}`;
+
+const escapeHtml = (text) =>
+  text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+// История дела от Gemini: stories/<дата>.json пишет GitHub Action раз в день.
+// Загружаем один раз, когда дело закрыто; показываем, только если она про это самое дело.
+const STORY_KEY = `case-file:story:${key}`;
+let story = storage.get(STORY_KEY);
+if (story?.id !== id) story = null;
+let storyRequested = false;
+
+async function loadStory() {
+  if (story || storyRequested) return;
+  storyRequested = true;
+  try {
+    const response = await fetch(`stories/${key}.json`, { cache: 'no-cache' });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.id !== id || typeof data.text !== 'string') return;
+    story = { id, text: data.text };
+    storage.set(STORY_KEY, story);
+    if (sheet === 'result') render();
+  } catch {
+    // истории нет — итог покажем без неё
+  }
+}
 
 const highlighted = (g, k, v) => hintNow?.cells.some(([a, b, c]) => a === g && b === k && c === v);
 
@@ -209,6 +235,14 @@ function resultSheet() {
         <p class="who">— ${culprit.name}, ${culprit.role}</p>
       </div>
     </div>
+    ${
+      story
+        ? `<h2>Из дневника следователя</h2><div class="diary">${story.text
+            .split('\n')
+            .map((p) => `<p>${escapeHtml(p)}</p>`)
+            .join('')}</div>`
+        : ''
+    }
     <table class="solution"><tr><th></th>${head}</tr>${rows}</table>
     <div class="stats">
       <span>Время ${clock(game.elapsed)}</span>
@@ -289,6 +323,7 @@ function render() {
   `;
   const list = app.querySelector('.clues');
   if (list) list.scrollTop = keep;
+  if (sheet === 'result') loadStory();
 }
 
 // После подсказки: прокрутить список улик к нужной улике, а страницу — к подсвеченной клетке,

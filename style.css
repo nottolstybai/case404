@@ -350,3 +350,8 @@ button:disabled { opacity: 0.4; cursor: default; }
 .clue .num { font-family: var(--mono); font-size: 13px; padding-top: 2px; }
 
 .place-tag { margin: 14px 0 -6px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--amber); }
+
+/* история от следователя */
+.diary { border-left: 2px solid var(--amber); padding: 2px 0 2px 14px; margin: 0 0 18px; }
+.diary p { margin: 0 0 10px; font-size: 16px; line-height: 1.55; }
+.diary p:last-child { margin-bottom: 0; }

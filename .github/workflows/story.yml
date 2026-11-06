@@ -1,0 +1,45 @@
+# История дня: раз в день Gemini пишет короткую развязку к делу.
+# Ключ — в Settings → Secrets and variables → Actions → секрет GEMINI_API_KEY.
+# Модель можно задать переменной GEMINI_MODEL там же (вкладка Variables); иначе скрипт подберёт сам.
+# Запустить вручную: Actions → «История дня» → Run workflow.
+name: История дня
+
+on:
+  schedule:
+    - cron: '17 15 * * *' # каждый день в 15:17 UTC — истории на вчера, сегодня и два дня вперёд
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: story
+  cancel-in-progress: false
+
+jobs:
+  story:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Написать истории
+        run: node scripts/story.mjs
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      - name: Сохранить в репозиторий
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p stories
+          git add stories
+          if git diff --cached --quiet; then echo "Новых историй нет"; exit 0; fi
+          git commit -m "Истории дел"
+          git push
+          gh api --method POST "repos/${{ github.repository }}/pages/builds" || echo "Pages пересоберётся сам"

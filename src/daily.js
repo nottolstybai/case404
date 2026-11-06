@@ -16,6 +16,10 @@ export function dateKey(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// Отпечаток дела: если генератор изменится, старые отметки и истории к новому делу не подойдут.
+export const caseId = (puzzle) =>
+  hashString(JSON.stringify([puzzle.solution, puzzle.clues, puzzle.culprit, puzzle.culpritClue]));
+
 export const isDateKey = (text) => /^\d{4}-\d{2}-\d{2}$/.test(text ?? '');
 
 export function caseNumber(key) {
