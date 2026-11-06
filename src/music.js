@@ -4,7 +4,7 @@
 // Браузеры не дают играть звук до первого действия игрока, поэтому старт — по первому тапу.
 
 const SRC = 'music/drone-v1.mp3';
-const VOLUME = 0.32; // тихо: музыка на фоне, не поверх
+const VOLUME = 0.8; // гул низкий, а динамики телефонов и ноутбуков басы почти не играют — громкость повыше
 const FADE = 4; // секунды перетекания на стыке
 const RAMP = 2.5; // секунды нарастания и затухания при включении/выключении
 
@@ -15,6 +15,9 @@ let loading = null;
 let nextStart = 0;
 let timer = null;
 let wanted = false; // игрок хочет музыку (и уже было действие на странице)
+let meter = null; // измеритель уровня — чтобы проверить, что звук действительно идёт
+let onChange = () => {}; // экран перерисовывает значок ♪, когда звук пошёл или остановился
+export const onMusicChange = (fn) => (onChange = fn);
 
 async function load() {
   if (buffer) return buffer;
@@ -59,6 +62,8 @@ export async function startMusic() {
       master = ctx.createGain();
       master.gain.value = 0;
       master.connect(ctx.destination);
+      meter = ctx.createAnalyser();
+      master.connect(meter);
     }
     await ctx.resume();
     await load();
@@ -71,6 +76,7 @@ export async function startMusic() {
     master.gain.cancelScheduledValues(now);
     master.gain.setValueAtTime(master.gain.value, now);
     master.gain.linearRampToValueAtTime(VOLUME, now + RAMP);
+    onChange();
   } catch {
     // нет Web Audio или файл не загрузился — играем без музыки
   }
@@ -84,13 +90,38 @@ export function stopMusic() {
   master.gain.setValueAtTime(master.gain.value, now);
   master.gain.linearRampToValueAtTime(0, now + 0.8);
   setTimeout(() => {
-    if (!wanted) ctx.suspend();
+    if (!wanted) ctx.suspend().then(() => onChange());
   }, 900);
+  onChange();
 }
 
 // Свернули вкладку — пауза; вернулись — продолжаем, если музыка включена.
 document.addEventListener('visibilitychange', () => {
   if (!ctx || !wanted) return;
-  if (document.hidden) ctx.suspend();
-  else ctx.resume();
+  (document.hidden ? ctx.suspend() : ctx.resume()).then(() => onChange());
 });
+
+export const isPlaying = () => Boolean(ctx && ctx.state === 'running' && wanted);
+
+// Уровень звука на выходе (0…1) — для проверки.
+export function musicLevel() {
+  if (!meter) return 0;
+  const data = new Float32Array(meter.fftSize);
+  meter.getFloatTimeDomainData(data);
+  return Math.sqrt(data.reduce((sum, x) => sum + x * x, 0) / data.length);
+}
+
+// Запуск по действию игрока. Браузеры по-разному считают «действием»: на телефонах — когда палец
+// отпущен (pointerup / touchend / click), на компьютере — клик или клавиша. Слушаем все и пробуем,
+// пока звук не пойдёт. shouldPlay() — включена ли музыка в настройках.
+export function playOnGesture(shouldPlay) {
+  const events = ['pointerup', 'touchend', 'click', 'keydown'];
+  const handler = (event) => {
+    if (event.target?.closest?.('[data-act="music"]')) return; // кнопку музыки обработает она сама
+    if (!shouldPlay()) return;
+    startMusic().then(() => {
+      if (isPlaying()) events.forEach((name) => document.removeEventListener(name, handler, true));
+    });
+  };
+  events.forEach((name) => document.addEventListener(name, handler, true));
+}

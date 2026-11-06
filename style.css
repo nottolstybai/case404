@@ -359,3 +359,4 @@ button:disabled { opacity: 0.4; cursor: default; }
 .credits { margin: 16px 0 0; font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--muted); }
 .credits a { color: var(--muted); }
 .icon-btn s { text-decoration-thickness: 2px; text-decoration-color: var(--red); }
+.icon-btn.playing { color: var(--amber); border-color: var(--amber); box-shadow: 0 0 10px rgba(212, 169, 72, 0.25); }

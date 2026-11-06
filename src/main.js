@@ -4,7 +4,7 @@ import { caseId, dailyPuzzle, dateKey, dateLabel, isDateKey } from './daily.js';
 import { CHECK, CROSS, accuse, accuseCategories, giveUp, hint, isOver, newGame, tap, toggleClue, undo } from './game.js';
 import { clueText, confessionText, introText, mainClueText, rulesText, themeTitle, valueName } from './text.js';
 import { STAMP, portrait, scene } from './art.js';
-import { startMusic, stopMusic } from './music.js';
+import { isPlaying, onMusicChange, playOnGesture, startMusic, stopMusic } from './music.js';
 import { hashString } from './rng.js';
 import { clock, plural, record, shareText, solvedCount, streak, untilMidnight } from './stats.js';
 
@@ -290,7 +290,7 @@ function render() {
       </div>
       <div class="top-right">
         <span class="timer" id="timer">${clock(game.elapsed)}</span>
-        <button class="icon-btn" data-act="music" aria-label="${settings.music ? 'Выключить музыку' : 'Включить музыку'}" aria-pressed="${settings.music}">${settings.music ? '♪' : '<s>♪</s>'}</button>
+        <button class="icon-btn ${isPlaying() ? 'playing' : ''}" data-act="music" aria-label="${settings.music ? 'Выключить музыку' : 'Включить музыку'}" aria-pressed="${settings.music}">${settings.music ? '♪' : '<s>♪</s>'}</button>
         <button class="icon-btn" data-act="help" aria-label="Как играть">?</button>
       </div>
     </header>
@@ -456,15 +456,10 @@ app.addEventListener('click', (event) => {
   if (el.dataset.act === 'hint') reveal();
 });
 
-// Музыка: браузер разрешает звук только после действия игрока — стартуем с первого касания.
-// Если первым делом нажали саму кнопку музыки, её обработает действие music().
-document.addEventListener(
-  'pointerdown',
-  (event) => {
-    if (settings.music && !event.target.closest('[data-act="music"]')) startMusic();
-  },
-  { once: true },
-);
+// Музыка стартует с первого действия игрока (раньше браузер звук не разрешит).
+// Значок ♪ светится, когда звук действительно идёт.
+playOnGesture(() => settings.music);
+onMusicChange(() => render());
 
 app.addEventListener('change', (event) => {
   if (event.target.dataset.act !== 'easy') return;
