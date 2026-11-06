@@ -25,7 +25,14 @@ const force = flag('--force');
 const key = process.env.GEMINI_API_KEY;
 // Порядок моделей: заданная, потом известные Flash. Если модель перегружена (503) — ждём и пробуем снова,
 // потом берём следующую.
-const MODELS = [process.env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'].filter(Boolean);
+const MODELS = [
+  process.env.GEMINI_MODEL,
+  'gemini-3.8-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+].filter(Boolean);
 const ATTEMPTS = 3; // сколько раз просить историю, если ответ не прошёл проверку
 const RETRIES = 3; // сколько раз повторять запрос к перегруженной модели
 const RETRYABLE = new Set([429, 500, 502, 503, 504, 598, 599]); // 598 — таймаут, 599 — пустой ответ
@@ -56,7 +63,7 @@ async function ask(model, prompt) {
       headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.9, maxOutputTokens: 2048 },
+        generationConfig: { temperature: 0.9, maxOutputTokens: 4096 }, // с запасом: новые модели сперва «думают»
       }),
       signal: AbortSignal.timeout(90_000),
     });
