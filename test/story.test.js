@@ -138,3 +138,12 @@ test('мягкий разбор ответа: JSON, JSON в ```json, прост�
   assert.equal(looseStory('Просто история без скобок.'), 'Просто история без скобок.');
   assert.equal(looseStory('{"story": сломано'), null);
 });
+
+test('время словами не проходит: «к двадцати тридцати»', () => {
+  const p = dailyPuzzle('2026-11-06');
+  const base = mockStory(p);
+  for (const phrase of ['Мирон к двадцати тридцати уже сидел там.', 'Нина была там с двадцати ноль.', 'Он пришёл в двадцать пятнадцать.']) {
+    assert.ok(validate(`${base} ${phrase}`, p).problems.some((x) => x.startsWith('время словами')), phrase);
+  }
+  assert.deepEqual(validate(base, p).problems, []);
+});
