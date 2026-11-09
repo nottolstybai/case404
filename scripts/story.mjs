@@ -83,9 +83,12 @@ async function post(name, url, headers, body) {
   if (!response.ok) {
     const text = await response.text();
     let message = text.slice(0, 200);
+    let failed = null; // что модель успела написать, если сервис не принял её ответ (Groq: error.failed_generation)
     try {
       const data = JSON.parse(text);
       message = data.error?.message ?? data.message ?? message;
+      const raw = data.error?.failed_generation;
+      if (raw) failed = typeof raw === 'string' ? raw : JSON.stringify(raw);
     } catch {
       // оставим как есть
     }
@@ -95,7 +98,9 @@ async function post(name, url, headers, body) {
       message.split('\n')[0].replace(/ For more information.*$/, '') +
       (limit ? ` Лимит: ${limit} в день.` : '') +
       (retryIn ? ` Снова можно через ${retryIn}.` : '');
-    throw fail(`${name}: HTTP ${response.status} ${message}`, response.status);
+    const error = fail(`${name}: HTTP ${response.status} ${message}`, response.status);
+    error.failed = failed;
+    throw error;
   }
   const text = await response.text();
   try {
@@ -170,6 +175,21 @@ async function askGemma(model, prompt) {
 // Groq — OpenAI-совместимый API (по документации console.groq.com/docs/openai);
 // строгий JSON — response_format json_schema со strict: true (поддерживается для gpt-oss-120b).
 async function askGroq(model, prompt) {
+  try {
+    return await askGroqStrict(model, prompt);
+  } catch (error) {
+    // «Failed to generate JSON»: сервис отверг ответ модели, но прислал его текст. Это не повторный запрос —
+    // пробуем разобрать то, что уже пришло; годится ли история, решит обычная проверка.
+    if (!error.failed) throw error;
+    const answer = looseAnswer(error.failed);
+    const shown = error.failed.replace(/\s+/g, ' ').slice(0, 400);
+    if (!answer) throw fail(`${error.message}\n    что написала модель: ${shown}`, error.status);
+    console.warn(`  ${model}: сервис не принял JSON, разобрали ответ сами. Начало: ${shown.slice(0, 160)}`);
+    return answer;
+  }
+}
+
+async function askGroqStrict(model, prompt) {
   const data = await post(
     model,
     'https://api.groq.com/openai/v1/chat/completions',
