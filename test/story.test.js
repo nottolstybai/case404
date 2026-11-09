@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dailyPuzzle } from '../src/daily.js';
 import { buildPrompt, clean, facts, mockStory, validate } from '../scripts/story-lib.mjs';
+import { days } from './helpers.js';
 
 const keys = ['2026-11-06', '2026-11-07', '2026-11-08', '2026-11-11'];
 
@@ -38,10 +39,18 @@ test('проверка ловит плохие ответы', () => {
 });
 
 test('места-прилагательные узнаются в любом падеже', () => {
-  const p = dailyPuzzle('2026-11-06');
+  // нужен день, где преступник был в месте-прилагательном (душевая, кладовая …)
+  let p = null;
+  for (const key of days(60, '2026-11-01')) {
+    p = dailyPuzzle(key);
+    if (/ая$/.test(facts(p).find((f) => f.culprit).place.name)) break;
+    p = null;
+  }
+  assert.ok(p, 'за 60 дней нет преступника в месте-прилагательном');
   const c = facts(p).find((f) => f.culprit);
   const text = mockStory(p);
-  for (const form of ['в душевой', 'в душевую', 'душевая']) {
+  assert.ok(text.includes(c.place.loc));
+  for (const form of [c.place.loc, c.place.to, c.place.name, c.place.name.replace(/ая$/, 'ой')]) {
     const replaced = text.replace(c.place.loc, form);
     assert.equal(validate(replaced, p).problems.filter((x) => x.startsWith('нет места')).length, 0, form);
   }
@@ -103,10 +112,28 @@ test('проверка фактов: чужое время или место в 
 });
 
 test('хорошая история модели за 7 ноября проходит проверку', () => {
+  // по образцу настоящего ответа модели; факты берём из нынешнего дела
   const p = dailyPuzzle('2026-11-07');
-  const text =
-    'Старый граф собрал гостей в усадьбе, чтобы огласить завещание, но до утра не дожил. Собака во дворе завыла в 19:20 — именно в этот момент пришёл преступник. Это сразу вычеркнуло из списка подозреваемых садовника Глеба в детской с цепью, репортёра Мирона в гостиной с ножницами, певицу Дину в холле с вазой и доктора Павла в кладовой с гирей. Лишь вдова Марта пришла в 19:20, затаившись в прачечной, где у неё и нашли молоток. Загнанная в угол, она тихо произнесла: «Завещание. Всё дело в завещании. Остальное вы и так знаете.» В её померкших глазах я увидел лишь холодную, нечеловеческую пустоту.';
+  const all = facts(p);
+  const c = all.find((f) => f.culprit);
+  const x = (m, f) => (c.person.gender === 'f' ? f : m);
+  const innocents = all
+    .filter((f) => !f.culprit)
+    .map((f) => `${f.person.name} — ${f.place.loc}, у ${f.person.gender === 'f' ? 'неё' : 'него'} нашли ${f.item.acc}`)
+    .join('; ');
+  const text = [
+    'Старый граф собрал гостей в усадьбе, чтобы огласить завещание, но до утра не дожил.',
+    `Собака во дворе завыла в ${c.time.name} — именно в этот момент пришёл преступник.`,
+    `Это сразу вычеркнуло из списка подозреваемых остальных: ${innocents}.`,
+    `Лишь ${c.person.name} ${x('пришёл', 'пришла')} в ${c.time.name}, затаившись ${c.place.loc}, где у ${x('него', 'неё')} и нашли ${c.item.acc}.`,
+    `${x('Загнанный', 'Загнанная')} в угол, ${x('он', 'она')} тихо ${x('произнёс', 'произнесла')}: «Завещание. Всё дело в завещании. Остальное вы и так знаете.»`,
+    `В ${x('его', 'её')} померкших глазах я увидел лишь холодную, нечеловеческую пустоту.`,
+  ].join(' ');
   assert.deepEqual(validate(text, p).problems, []);
+  // а если перепутать место преступника с чужим — проверка это видит
+  const other = all.find((f) => !f.culprit);
+  const swapped = text.replace(`затаившись ${c.place.loc}`, `затаившись ${other.place.loc}`);
+  assert.ok(validate(swapped, p).problems.some((x) => x.includes('приписано не тому')));
 });
 
 test('у соседних дней разные приёмы рассказа', async () => {
