@@ -1,4 +1,4 @@
-// Дело дня: дата → одно и то же дело у всех.
+// Дело дня: дата → одно и то же дело у всех. Случайное дело: код → одно и то же дело.
 
 import { hashString, mulberry32, pick, randInt, shuffle } from './rng.js';
 import { SUSPECTS } from './suspects.js';
@@ -55,11 +55,20 @@ export function deck(size, number, salt) {
   return order[(((number - 1) % size) + size) % size];
 }
 
-export function dailyPuzzle(key) {
-  const rand = mulberry32(hashString(`case-file:${key}`));
-  const number = caseNumber(key);
-  // тема дня идёт «колодой»: за четыре дня подряд — все четыре места
-  const themeKey = THEME_KEYS[deck(THEME_KEYS.length, number, 'theme')];
+// Код случайного дела: 'x-' + 6 знаков [0-9a-z].
+export function randomKey(rand = Math.random) {
+  const abc = '0123456789abcdefghijklmnopqrstuvwxyz';
+  return 'x-' + Array.from({ length: 6 }, () => abc[Math.floor(rand() * abc.length)]).join('');
+}
+
+export const isRandomKey = (text) => /^x-[0-9a-z]{4,8}$/.test(text ?? '');
+
+// Ключ дела: дата 'YYYY-MM-DD' или код случайного дела 'x-…'.
+export const isCaseKey = (text) => isDateKey(text) || isRandomKey(text);
+
+// Одно дело: rand — генератор от ключа, number — номер для «колод» текстов,
+// themeKey — место. Порядок вызовов rand менять нельзя: иначе изменятся прошлые дела.
+function buildPuzzle(rand, number, themeKey) {
   const theme = THEMES[themeKey];
   const pool = SUSPECTS.filter((s) => !theme.skipRoles.includes(s.role));
   const suspects = shuffle(rand, pool).slice(0, SIZE);
@@ -80,5 +89,28 @@ export function dailyPuzzle(key) {
     // картинка дня: какое окно горит, какая луна, какая погода
     art: { window: randInt(rand, 6), moon: randInt(rand, 2), weather: randInt(rand, 4) },
   };
-  return { ...puzzle, theme: themeKey, story, key, number };
+  return { ...puzzle, theme: themeKey, story };
 }
+
+export function dailyPuzzle(key) {
+  const rand = mulberry32(hashString(`case-file:${key}`));
+  const number = caseNumber(key);
+  // тема дня идёт «колодой»: за четыре дня подряд — все четыре места
+  const themeKey = THEME_KEYS[deck(THEME_KEYS.length, number, 'theme')];
+  return { ...buildPuzzle(rand, number, themeKey), key, number, random: false };
+}
+
+// Случайное дело по коду: тот же генератор, но всё — от хэша кода.
+// Номера у него нет, поэтому «колоды» текстов листаем псевдономером из хэша.
+export function randomPuzzle(key) {
+  const hash = hashString(`case-file:${key}`);
+  const themeKey = THEME_KEYS[hash % THEME_KEYS.length];
+  const puzzle = buildPuzzle(mulberry32(hash), 1 + (hash % 9973), themeKey);
+  return { ...puzzle, key, number: null, random: true, code: key.slice(2).toUpperCase() };
+}
+
+// Дело по ключу: по дате — дело дня, по коду — случайное.
+export const casePuzzle = (key) => (isRandomKey(key) ? randomPuzzle(key) : dailyPuzzle(key));
+
+// «Дело №9» или «Дело ×A3F9K2».
+export const caseTitle = (puzzle) => (puzzle.random ? `Дело ×${puzzle.code}` : `Дело №${puzzle.number}`);

@@ -1,63 +1,99 @@
-// Экран дела: история, улики, карточки подозреваемых, подсказка, обвинение.
+// Экран дела: доска «Хроника ночи», улики, подсказка, обвинение и листы.
+// Рисуем всегда одинаково: состояние → одна строка HTML → morph(app, html).
+// Узлы, которые не изменились, остаются на месте: не теряются фокус и прокрутка,
+// а смена классов успевает проиграть CSS-переходы (отметка, колонка, печать).
 
-import { caseId, dailyPuzzle, dateKey, dateLabel, isDateKey } from './daily.js';
-import { CHECK, CROSS, accuse, accuseCategories, giveUp, hint, isOver, newGame, tap, toggleClue, undo } from './game.js';
-import { clueText, confessionText, introText, mainClueText, rulesText, themeTitle, valueName } from './text.js';
-import { STAMP, portrait, scene } from './art.js';
-import { isPlaying, onMusicChange, playOnGesture, startMusic, stopMusic } from './music.js';
-import { hashString } from './rng.js';
-import { clock, plural, record, shareText, solvedCount, streak, untilMidnight } from './stats.js';
-
-const params = new URLSearchParams(location.search);
-const key = isDateKey(params.get('date')) ? params.get('date') : dateKey(); // ?date=2026-11-06 — для проверки
-const puzzle = dailyPuzzle(key);
-const SAVE = `case-file:${key}`;
-const SETTINGS = 'case-file:settings';
-const STATS = 'case-file:stats';
-// серия считается только для настоящего сегодняшнего дела, не для ?date=
-const isToday = key === dateKey();
-const n = puzzle.suspects.length;
-
-const storage = {
-  get(name) {
-    try {
-      return JSON.parse(localStorage.getItem(name));
-    } catch {
-      return null;
-    }
-  },
-  set(name, value) {
-    try {
-      localStorage.setItem(name, JSON.stringify(value));
-    } catch {
-      // без сохранения тоже можно играть
-    }
-  },
-};
-
-// Отпечаток дела: если генератор изменится, старые отметки к новому делу не подойдут.
-const id = caseId(puzzle);
-const saved = storage.get(SAVE);
-let game = saved?.id === id ? { ...newGame(puzzle), ...saved } : { ...newGame(puzzle), id };
-let settings = { easy: false, seenHelp: false, cluesOpen: true, music: true, ...storage.get(SETTINGS) };
-let hintNow = null; // { text, cells, clue }
-let mode = CROSS; // что ставит тап: ✗ или ✓
-// открытый лист: 'help' | 'accuse' | 'giveup' | 'result' | null
-let sheet = isOver(game) ? 'result' : settings.seenHelp ? null : 'help';
-let draft = { g: null, values: {} };
-let accuseError = '';
+import { caseId, caseNumber, casePuzzle, caseTitle, dateKey, dateLabel, isCaseKey, randomKey } from './daily.js';
+import {
+  AUTO_CHECK,
+  CHECK,
+  CROSS,
+  accuse,
+  accuseCategories,
+  clueState,
+  culpritFacts,
+  giveUp,
+  hint,
+  isBlank,
+  isCheck,
+  isOver,
+  newGame,
+  posFromMarks,
+  progress,
+  redo,
+  reset,
+  tap,
+  toggleClue,
+  undo,
+  view,
+} from './game.js';
+import { clueRefs, context, onlyValue, ref, settled } from './logic.js';
+import { introText, themeTitle } from './text.js';
+import { clock, record, shareText, streak, untilMidnight } from './stats.js';
+import { morph } from './morph.js';
+import { boardHtml } from './ui-board.js';
+import { cluePanelHtml, clueListHtml, hintHtml, mainClueHtml } from './ui-clues.js';
+import { bannerHtml, sheetHtml } from './ui-sheets.js';
+import { ICONS, esc, storage } from './ui-util.js';
 
 const app = document.getElementById('app');
-document.title = `Дело №${puzzle.number}`;
 
-const save = () => storage.set(SAVE, game);
-const saveSettings = () => storage.set(SETTINGS, settings);
-const cap = (text) => text[0].toUpperCase() + text.slice(1);
+// Дело собирается до 1 с на телефоне: сперва дадим браузеру показать заставку из index.html.
+await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 
+const params = new URLSearchParams(location.search);
+const asked = params.get('case') ?? params.get('date');
+const key = isCaseKey(asked) ? asked : dateKey(); // ?date=2026-11-06 — дело дня, ?case=x-a3f9k2 — случайное
+const puzzle = casePuzzle(key);
+const ctx = context(puzzle);
+const { n } = ctx;
+const id = caseId(puzzle);
+// серия считается только для сегодняшнего дела дня
+const isToday = !puzzle.random && key === dateKey();
+const title = caseTitle(puzzle);
+const subtitle = `${themeTitle(puzzle)} · ${puzzle.random ? 'случайное дело' : dateLabel(key)}`;
+document.title = title;
+
+const saveKey = (k) => `case404:v2:${k}`;
+const SETTINGS = 'case-file:settings';
+const STATS = 'case-file:stats';
+
+// Сохранённая партия подходит, только если это то же дело и доска нужного размера.
+function loadGame() {
+  const saved = storage.get(saveKey(key));
+  const fresh = newGame(puzzle);
+  const g = saved?.game;
+  if (saved?.id !== id || !g || !Array.isArray(g.marks)) return fresh;
+  const fits = g.marks.length === ctx.rows && g.marks.every((row) => Array.isArray(row) && row.length === n);
+  return fits ? { ...fresh, ...g } : fresh;
+}
+
+let game = loadGame();
+let settings = { easy: false, seenHelp: false, cluesOpen: true, music: true, sfx: true, clueMode: 'one', ...storage.get(SETTINGS) };
 let stats = storage.get(STATS) ?? {};
-let shareNote = ''; // «Скопировано» после «Поделиться»
 
-// Записать результат дня, когда дело закрыто (раскрыто или игрок сдался).
+const save = () => storage.set(saveKey(key), { id, game });
+const saveSettings = () => storage.set(SETTINGS, settings);
+
+// Раньше история запоминалась в браузере и после замены файла оставалась старой; чистим ту запись.
+storage.remove(`case-file:story:${key}`);
+
+// Состояние экрана (в партию не входит).
+const ui = {
+  sheet: isOver(game) ? 'result' : game.started ? null : 'brief',
+  active: null, // подсвеченная улика: номер, -1 — главная, null — никакой
+  cursor: 0, // какая улика видна в режиме «по одной»
+  stepDir: 0, // откуда въехала улика при листании
+  hint: null, // ответ hint() + stage: 1 — куда смотреть, 2 — что отметить
+  focus: [0, 0], // клетка, на которую попадает Tab
+  toast: null, // { text, act, label }
+  draft: { g: null, values: {} },
+  prefilled: false,
+  accuseError: '',
+  shareNote: '',
+};
+
+// Записать результат дня, когда дело закрыто.
 function recordResult() {
   if (!isToday || !isOver(game)) return;
   const next = record(stats, puzzle.number, game);
@@ -65,24 +101,507 @@ function recordResult() {
 }
 recordResult(); // дело могло быть закрыто до появления статистики
 
-const shareUrl = () => `${location.origin}${location.pathname}`;
+/* ---------- звук ---------- */
 
-const escapeHtml = (text) =>
-  text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// Звук не обязателен: если модуль не загрузится, играть можно и без него.
+let audio = null;
+const sfx = (name) => {
+  try {
+    audio?.sfx(name);
+  } catch {
+    // звук не главное
+  }
+};
+import('./audio.js')
+  .then((mod) => {
+    audio = mod;
+    mod.setupAudio(() => ({ music: settings.music, sfx: settings.sfx }));
+    mod.onAudioChange(() => render());
+    tension();
+    render();
+  })
+  .catch(() => {});
 
-// История дела: stories/<дата>.json пишет GitHub Action. Загружаем при каждом открытии страницы,
-// когда дело закрыто (один маленький запрос к файлу): историю могут переписать — показываем свежую.
-// Раньше история запоминалась в браузере и после замены файла оставалась старой; чистим ту запись.
-try {
-  localStorage.removeItem(`case-file:story:${key}`);
-} catch {
-  // нет доступа к хранилищу — не беда
+/* ---------- что видно на доске ---------- */
+
+const wideQuery = matchMedia('(min-width: 960px)');
+const wide = () => wideQuery.matches;
+
+// Всё, что выводится из партии: доска с автоотметками, улики, колонка преступника.
+function derive() {
+  const easy = settings.easy;
+  const d = view(game, n, easy);
+  const facts = culpritFacts(game, puzzle, easy);
+  const states = puzzle.clues.map((clue) => clueState(game, puzzle, clue, easy));
+  const locked = new Set();
+  for (let t = 0; t < n; t++) {
+    if (ctx.groups.every((_, g) => Array.from({ length: n }, (_, v) => d[g * n + v][t]).some(isCheck))) locked.add(t);
+  }
+  const complete = facts.slot >= 0 && facts.g !== null && accuseCategories(puzzle).every((k) => facts.values[k] !== undefined);
+  return { d, pos: posFromMarks(game, n, easy), facts, states, locked, complete, progress: progress(game, puzzle, easy) };
 }
+
+const { k: mainK, v: mainV } = puzzle.culpritClue;
+const mainRef = ref(ctx, { k: mainK, v: mainV });
+const refsOf = (i) => (i === -1 ? { rows: mainRef.row !== undefined ? [mainRef.row] : [], slots: mainRef.slot !== undefined ? [mainRef.slot] : [] } : clueRefs(ctx, puzzle.clues[i]));
+
+const isOpen = (states, i) => states[i] !== 'done' && !game.struck.includes(i);
+
+function frame(base = derive()) {
+  const { d, facts, states, locked, pos } = base;
+  const hl = { rows: new Set(), slots: new Set() };
+  const targets = new Map();
+  const h = ui.hint;
+  if (h) {
+    h.rows.forEach((r) => hl.rows.add(r));
+    h.slots.forEach((t) => hl.slots.add(t));
+    // ошибку всегда вычёркивают; шаг — ✓ или ✗ по check
+    h.cells.forEach(([r, t]) => targets.set(`${r}:${t}`, h.kind === 'mistake' ? 'm' : h.check ? 'v' : 'x'));
+  } else if (ui.active !== null) {
+    const refs = refsOf(ui.active);
+    refs.rows.forEach((r) => hl.rows.add(r));
+    refs.slots.forEach((t) => hl.slots.add(t));
+  }
+  // кто пришёл в каждую колонку и сколько строк группы решено — по тому же выводу, что culpritFacts:
+  // если для колонки остался один человек, его портрет появляется ещё до ✓
+  const whoAt = Array.from({ length: n }, (_, t) => settled(ctx, pos, 0, t));
+  const solvedRows = new Set();
+  pos.forEach((mask, r) => onlyValue(mask) >= 0 && solvedRows.add(r));
+  const groupDone = ctx.groups.map((_, g) => Array.from({ length: n }, (_, v) => g * n + v).filter((r) => solvedRows.has(r)).length);
+  const clues = puzzle.clues.map((_, i) => ({
+    i,
+    state: states[i],
+    used: game.struck.includes(i),
+    active: ui.active === i,
+    hinted: h?.clue === i,
+  }));
+  return {
+    ...base,
+    puzzle,
+    ctx,
+    hl,
+    targets,
+    whoAt,
+    solvedRows,
+    groupDone,
+    clues,
+    over: isOver(game),
+    focus: ui.focus,
+    culprit: { slot: facts.slot, attrRow: mainRef.row ?? -1 },
+    active: ui.active,
+    cursor: ui.cursor,
+    stepDir: ui.stepDir,
+    clueMode: settings.clueMode,
+    remaining: puzzle.clues.filter((_, i) => isOpen(states, i)).length,
+    hint: h,
+  };
+}
+
+/* ---------- разметка экрана ---------- */
+
+const soundOn = () => settings.music || settings.sfx;
+
+function headerHtml(f) {
+  const playing = audio?.isMusicPlaying?.() ?? false;
+  return `
+    <header class="top">
+      <button class="case-btn" data-act="brief" aria-label="${esc(title)}: открыть дело">
+        <span class="case-no">${esc(title)}</span>
+        <span class="case-sub">${esc(subtitle)}</span>
+      </button>
+      <span class="timer${f.over ? ' stopped' : ''}" id="timer" aria-label="Время расследования" role="timer">${clock(game.elapsed)}</span>
+      <button class="icon-btn${playing ? ' playing' : ''}" data-act="sound" aria-pressed="${soundOn()}" aria-label="${soundOn() ? 'Выключить звук' : 'Включить звук'}">${soundOn() ? ICONS.note : ICONS.noteOff}</button>
+      <button class="icon-btn" data-act="menu" aria-label="Дела: сегодня, архив, случайное">${ICONS.menu}</button>
+      <button class="icon-btn q" data-act="help" aria-label="Как играть и настройки">?</button>
+    </header>`;
+}
+
+function toolbarHtml(f) {
+  const over = f.over;
+  const off = (cond) => (over || cond ? ' disabled' : '');
+  const accuseBtn = over
+    ? '<button class="tb-btn primary" data-act="show-result">Итог</button>'
+    : `<button class="tb-btn primary${f.complete ? ' ready' : ''}" data-act="accuse">Обвинить</button>`;
+  const w = wide();
+  return `
+    <nav class="toolbar" aria-label="Действия">
+      <button class="tb-icon" data-act="undo" aria-label="Отменить ход"${off(!game.past.length)}>${ICONS.undo}${w ? '<span>Отменить</span>' : ''}</button>
+      <button class="tb-icon" data-act="redo" aria-label="Вернуть ход"${off(!game.future.length)}>${ICONS.redo}${w ? '<span>Вернуть</span>' : ''}</button>
+      <button class="tb-icon" data-act="reset" aria-label="Начать заново: очистить доску"${off(isBlank(game))}>${ICONS.reset}${w ? '<span>Заново</span>' : ''}</button>
+      <button class="tb-btn hint-btn${f.hint?.stage === 1 ? ' more' : ''}" data-act="hint"${off(false)}>Подсказка</button>
+      ${accuseBtn}
+    </nav>`;
+}
+
+function phoneHtml(f) {
+  return `
+    <div class="layout phone" data-key="phone">
+      <section class="board-wrap">${boardHtml(f)}</section>
+    </div>
+    <div class="dock" data-key="dock">
+      ${cluePanelHtml(f)}
+      ${toolbarHtml(f)}
+    </div>`;
+}
+
+function wideHtml(f) {
+  return `
+    <div class="layout wide" data-key="wide">
+      <section class="file">
+        ${bannerHtml(puzzle)}
+        <p class="place-tag">${esc(themeTitle(puzzle))}</p>
+        <p class="intro">${esc(introText(puzzle))}</p>
+        ${mainClueHtml(f)}
+        <h2 class="sec">Улики · ${f.clues.length} · осталось ${f.remaining}</h2>
+        <div class="clues mode-list">${clueListHtml(f)}</div>
+      </section>
+      <section class="desk">
+        ${boardHtml(f)}
+        ${toolbarHtml(f)}
+        ${hintHtml(f) || '<p class="desk-tip">Тап — ✗, ещё тап — ✓. Правая кнопка — сразу ✓. Стрелки и Enter тоже работают.</p>'}
+      </section>
+    </div>`;
+}
+
+const toastHtml = () =>
+  ui.toast
+    ? `<div class="toast" role="status" data-key="${esc(ui.toast.text)}"><span>${esc(ui.toast.text)}</span>${ui.toast.act ? `<button data-act="${ui.toast.act}">${esc(ui.toast.label)}</button>` : ''}</div>`
+    : '';
+
+// Данные для листов.
+function sheetData() {
+  return {
+    key,
+    puzzle,
+    game,
+    settings,
+    stats,
+    title,
+    subtitle,
+    isToday,
+    orderK: ctx.orderK,
+    draft: ui.draft,
+    prefilled: ui.prefilled,
+    accuseError: ui.accuseError,
+    shareNote: ui.shareNote,
+    story,
+    archive: archive(),
+    savedGame: (k) => {
+      const saved = storage.get(saveKey(k));
+      return saved && typeof saved.game === 'object' ? saved.game : null;
+    },
+  };
+}
+
+// Дело дня и 14 прошлых (с первого дела, не раньше).
+function archive() {
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i <= 14; i++) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const k = dateKey(day);
+    const number = caseNumber(k);
+    if (number < 1) break;
+    out.push({ key: k, number, date: dateLabel(k), today: i === 0, href: i === 0 ? location.pathname : `?date=${k}` });
+  }
+  return out;
+}
+
+/* ---------- отрисовка ---------- */
+
+let lastSheet = null;
+let lastInput = 'pointer'; // чем игрок действовал последним: 'key' или 'pointer'
+addEventListener('keydown', () => (lastInput = 'key'), true);
+addEventListener('pointerdown', () => (lastInput = 'pointer'), true);
+let opener = null; // кто открыл лист — туда вернётся фокус
+
+function render() {
+  const f = frame();
+  const html = `${headerHtml(f)}${wide() ? wideHtml(f) : phoneHtml(f)}<div class="sheets">${sheetHtml(ui.sheet, sheetData())}</div><div class="toasts">${toastHtml()}</div>`;
+  morph(app, html);
+  document.body.classList.toggle('sheet-open', Boolean(ui.sheet));
+  if (ui.sheet !== lastSheet) {
+    if (ui.sheet) {
+      if (!lastSheet) opener = document.activeElement;
+      const sheet = app.querySelector('.sheet');
+      // с клавиатуры — сразу на главную кнопку; после касания или мыши — на сам лист, без рамки фокуса
+      const button = lastInput === 'key' ? sheet.querySelector('[data-autofocus]:not([disabled])') : null;
+      (button ?? sheet).focus({ preventScroll: true });
+      if (ui.sheet === 'result') loadStory();
+    } else if (opener?.isConnected) {
+      opener.focus({ preventScroll: true });
+    }
+    lastSheet = ui.sheet;
+  }
+  watchDock();
+}
+
+// Высота нижней панели — в CSS-переменную: от неё зависят высота строк доски и отступ страницы.
+let dockSeen = null;
+const dockObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(([entry]) => setDockHeight(entry.target)) : null;
+// --dock-base — без подсказки: строки доски не прыгают, когда подсказка появляется и исчезает.
+function setDockHeight(el) {
+  const full = Math.ceil(el.getBoundingClientRect().height);
+  const hintBar = el.querySelector('.hintbar')?.getBoundingClientRect().height ?? 0;
+  const root = document.documentElement.style;
+  root.setProperty('--dock-h', `${full}px`);
+  root.setProperty('--dock-base', `${Math.ceil(full - hintBar)}px`);
+}
+function watchDock() {
+  const dock = app.querySelector('.dock');
+  if (dock === dockSeen) return;
+  dockObserver?.disconnect();
+  dockSeen = dock;
+  if (dock) {
+    setDockHeight(dock);
+    dockObserver?.observe(dock);
+  } else {
+    document.documentElement.style.setProperty('--dock-h', '0px');
+    document.documentElement.style.setProperty('--dock-base', '0px');
+  }
+}
+
+/* ---------- изменения партии ---------- */
+
+let before = derive();
+
+// Музыка напрягается по мере того, как доска заполняется; колонка преступника собрана — на максимум.
+function tension(base = before) {
+  try {
+    audio?.setTension(base.complete ? 1 : base.progress);
+  } catch {
+    // звук не главное
+  }
+}
+
+// После хода: звуки «улика сошлась» и «колонка закрылась», сохранение, отрисовка.
+function changed({ sounds = true } = {}) {
+  const now = derive();
+  if (sounds) {
+    const newlyDone = now.states.some((s, i) => s === 'done' && before.states[i] !== 'done');
+    const newlyLocked = [...now.locked].some((t) => !before.locked.has(t));
+    if (newlyLocked) setTimeout(() => sfx('lock'), 160);
+    else if (newlyDone) setTimeout(() => sfx('done'), 160);
+  }
+  before = now;
+  tension(now);
+  save();
+  render();
+}
+
+const cellEl = (r, t) => app.querySelector(`.cell[data-r="${r}"][data-t="${t}"]`);
+
+// Перезапустить короткую анимацию класса на узле (вспышка, тряска).
+function replay(el, cls, ms = 700) {
+  if (!el) return;
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), ms);
+}
+
+function tapCell(r, t, want = null) {
+  ui.focus = [r, t];
+  if (isOver(game)) return render();
+  const res = tap(game, r, t, { easy: settings.easy, want });
+  if (!res) return render();
+  if (res.blocked) {
+    sfx('blocked');
+    render();
+    replay(cellEl(...res.blocked), 'flash');
+    return;
+  }
+  if (res.mark === AUTO_CHECK) {
+    // клетка уже отмечена сама — подскажем, что тут ничего делать не надо
+    render();
+    replay(cellEl(r, t), 'flash');
+    return;
+  }
+  ui.hint = null;
+  ui.toast = null;
+  sfx(res.mark === CROSS ? 'cross' : res.mark === CHECK ? 'check' : 'clear');
+  changed();
+}
+
+function doUndo() {
+  if (!undo(game)) return;
+  ui.hint = null;
+  ui.toast = null;
+  sfx('clear');
+  changed({ sounds: false });
+}
+
+function doRedo() {
+  if (!redo(game)) return;
+  ui.hint = null;
+  ui.toast = null;
+  sfx('clear');
+  changed({ sounds: false });
+}
+
+let toastTimer = 0;
+function showToast(toast, ms = 6000) {
+  ui.toast = toast;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    ui.toast = null;
+    render();
+  }, ms);
+}
+
+/* ---------- улики ---------- */
+
+// Следующая неотработанная улика в сторону dir; если все отработаны — просто соседняя.
+function stepClue(dir) {
+  const total = puzzle.clues.length;
+  const anyOpen = puzzle.clues.some((_, j) => isOpen(before.states, j));
+  let i = ui.cursor;
+  for (let s = 0; s < total; s++) {
+    i = (i + dir + total) % total;
+    if (!anyOpen || isOpen(before.states, i)) break;
+  }
+  ui.cursor = i;
+  ui.stepDir = dir;
+  ui.active = ui.hint ? null : ui.cursor;
+  sfx('select');
+  render();
+}
+
+function firstOpenClue() {
+  const i = puzzle.clues.findIndex((_, j) => isOpen(before.states, j));
+  return i < 0 ? 0 : i;
+}
+ui.cursor = firstOpenClue();
+
+function pickClue(i) {
+  ui.hint = null;
+  ui.stepDir = 0;
+  if (ui.active === i) ui.active = null;
+  else {
+    ui.active = i;
+    if (i >= 0) ui.cursor = i;
+    sfx('select');
+  }
+  render();
+}
+
+// Список улик в панели: прокрутить к улике внутри списка, не двигая страницу.
+function revealClue(i) {
+  const item = app.querySelector(`.dock .cl-list [data-key="c${i}"]`);
+  const list = item?.closest('.cl-list');
+  if (!list) return;
+  const top = item.offsetTop - list.offsetTop;
+  if (top < list.scrollTop || top + item.offsetHeight > list.scrollTop + list.clientHeight) {
+    list.scrollTo({ top: Math.max(0, top - 8), behavior: 'smooth' });
+  }
+}
+
+// Подсвеченная подсказкой клетка или строка должна быть видна — не под панелью и не над экраном.
+function revealBoard() {
+  const el = app.querySelector('.cell.tgt') ?? app.querySelector('.brow.hl') ?? app.querySelector('.slot-h.hl');
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const dock = app.querySelector('.dock');
+  const bottom = dock ? dock.getBoundingClientRect().top - 8 : innerHeight - 8;
+  const headH = app.querySelector('.bhead')?.getBoundingClientRect().height ?? 0;
+  if (rect.top >= headH + 4 && rect.bottom <= bottom) return;
+  scrollBy({ top: rect.bottom > bottom ? rect.bottom - bottom + 12 : rect.top - headH - 12, behavior: 'smooth' });
+}
+
+/* ---------- подсказка ---------- */
+
+// Первое нажатие — куда смотреть; второе по той же подсказке — что именно отметить.
+function doHint() {
+  if (isOver(game)) return;
+  const easy = settings.easy;
+  const probe = hint(game, puzzle, { easy, detail: false, count: false });
+  if (ui.hint && ui.hint.key === probe.key && ui.hint.stage === 1 && probe.kind === 'step') {
+    ui.hint = { ...hint(game, puzzle, { easy, detail: true, count: false }), stage: 2 };
+  } else if (!(ui.hint && ui.hint.key === probe.key)) {
+    ui.hint = { ...hint(game, puzzle, { easy, detail: false, count: true }), stage: probe.kind === 'step' ? 1 : 2 };
+  }
+  ui.active = null;
+  ui.toast = null;
+  if (ui.hint.clue !== null) {
+    ui.cursor = ui.hint.clue;
+    ui.stepDir = 0;
+  }
+  sfx('hint');
+  save();
+  render();
+  if (ui.hint.clue !== null) revealClue(ui.hint.clue);
+  revealBoard();
+  for (const el of app.querySelectorAll('.cell.tgt')) replay(el, 'flash');
+}
+
+/* ---------- обвинение ---------- */
+
+function openAccuse() {
+  const facts = culpritFacts(game, puzzle, settings.easy);
+  const draft = { g: ui.draft.g, values: { ...ui.draft.values } };
+  let filled = false;
+  if (facts.g !== null) {
+    draft.g = facts.g;
+    filled = true;
+  }
+  for (const k of accuseCategories(puzzle)) {
+    if (facts.values[k] === undefined) continue;
+    draft.values[k] = facts.values[k];
+    filled = true;
+  }
+  ui.draft = draft;
+  ui.prefilled = filled;
+  ui.accuseError = '';
+  openSheet('accuse');
+}
+
+function openSheet(name) {
+  ui.sheet = name;
+  if (name !== 'result') sfx('open');
+  render();
+}
+
+function finish(sound) {
+  ui.hint = null;
+  ui.active = null;
+  ui.toast = null;
+  ui.shareNote = '';
+  recordResult();
+  save();
+  ui.sheet = 'result';
+  render();
+  setTimeout(() => sfx(sound), 250); // под удар печати
+}
+
+function closeSheet() {
+  if (!ui.sheet) return;
+  if (ui.sheet === 'brief' && !game.started) return start();
+  if (ui.sheet === 'help' && !settings.seenHelp) {
+    settings.seenHelp = true;
+    saveSettings();
+  }
+  ui.sheet = null;
+  render();
+}
+
+function start() {
+  const first = !game.started;
+  game.started = true;
+  save();
+  ui.sheet = first && !settings.seenHelp ? 'help' : null;
+  if (ui.sheet) sfx('open');
+  render();
+}
+
+/* ---------- история дела ---------- */
+
+// stories/<дата>.json пишет GitHub Action. Загружаем каждый раз, когда показываем итог:
+// историю могут переписать — показываем свежую. Чужой id — история к другому делу.
 let story = null;
 let storyRequested = false;
 
 async function loadStory() {
-  if (storyRequested) return;
+  if (storyRequested || puzzle.random) return;
   storyRequested = true;
   try {
     const response = await fetch(`stories/${key}.json`, { cache: 'no-cache' });
@@ -90,388 +609,300 @@ async function loadStory() {
     const data = await response.json();
     if (data.id !== id || typeof data.text !== 'string') return;
     story = { id, text: data.text };
-    if (sheet === 'result') render();
+    if (ui.sheet === 'result') render();
   } catch {
     // истории нет — итог покажем без неё
   }
 }
 
-const highlighted = (g, k, v) => hintNow?.cells.some(([a, b, c]) => a === g && b === k && c === v);
+/* ---------- поделиться ---------- */
 
-// Вариант на карточке человека.
-function chip(g, k, v) {
-  const main = puzzle.culpritClue.k === k && puzzle.culpritClue.v === v; // примета из главной улики
-  const cls = ['chip', game.marks[g][k][v] === CROSS && 'x', game.marks[g][k][v] === CHECK && 'ok', main && 'main', highlighted(g, k, v) && 'hl']
-    .filter(Boolean)
-    .join(' ');
-  return `<button class="${cls}" data-act="mark" data-g="${g}" data-k="${k}" data-v="${v}">${cap(valueName(puzzle, k, v))}</button>`;
+function shareUrl() {
+  const base = `${location.origin}${location.pathname}`;
+  if (isToday) return base;
+  return puzzle.random ? `${base}?case=${key}` : `${base}?date=${key}`;
 }
 
-function card(person, g) {
-  const rows = puzzle.categories
-    .map(
-      (cat, k) => `
-      <div class="row">
-        <div class="row-title">${cat.title}</div>
-        <div class="chips">${cat.values.map((_, v) => chip(g, k, v)).join('')}</div>
-      </div>`,
-    )
-    .join('');
-  return `
-    <article class="card">
-      <div class="card-head">
-        ${portrait(person.role)}
-        <div><div class="name">${person.name}</div><div class="role">${cap(person.role)}</div></div>
-      </div>
-      ${rows}
-    </article>`;
-}
-
-function clueItem(clue, i) {
-  const cls = ['clue', game.struck.includes(i) && 'struck', hintNow?.clue === i && 'hl'].filter(Boolean).join(' ');
-  const num = String(i + 1).padStart(2, '0');
-  return `<li class="${cls}" data-act="clue" data-i="${i}"><span class="num">${num}</span><span class="body">${clueText(puzzle, clue)}</span></li>`;
-}
-
-// Лист открыт поверх страницы; клик по затемнению закрывает его.
-const overlay = (inner, extra = '') => `
-  <div class="overlay" data-act="close-sheet">
-    <div class="sheet ${extra}" data-stop>${inner}</div>
-  </div>`;
-
-const exChip = (text, state = '') => `<span class="chip ${state}">${text}</span>`;
-
-function helpSheet() {
-  return overlay(`
-    <h3>Как играть</h3>
-    <p class="sub">${rulesText(puzzle)}</p>
-    <div class="example">
-      <div class="ex-step">
-        <p class="ex-clue">«Вера не была в подвале.»</p>
-        <p class="ex-do">Внизу выбран ✗ — тапни «Подвал»:</p>
-        <div class="ex-chips">${exChip('Подвал', 'x')}${exChip('Кухня')}${exChip('Сад')}</div>
-      </div>
-      <div class="ex-step">
-        <p class="ex-clue">«Вера не была в саду.»</p>
-        <p class="ex-do">Осталась кухня — переключи на ✓ и тапни её:</p>
-        <div class="ex-chips">${exChip('Подвал', 'x')}${exChip('Кухня', 'ok')}${exChip('Сад', 'x')}</div>
-      </div>
-      <p class="ex-do">После ✓ остальное в строке и кухня у других вычёркиваются сами. Повторный тап стирает отметку, тап по улике зачёркивает её.</p>
-    </div>
-    <p class="sub">Главная улика называет одну примету преступника — она отмечена на карточках красной точкой. Найди, кто это, узнай о нём остальное и жми «Обвинить». Заполнять всю доску не обязательно.</p>
-    <h2>Как читать улики</h2>
-    <ul class="glossary">
-      <li><b>раньше, позже</b> — не обязательно сразу</li>
-      <li><b>сразу после, прямо перед</b> — подряд, никого между ними</li>
-      <li><b>один за другим</b> — подряд, в любом порядке</li>
-      <li><b>между ними приходил кто-то ещё</b> — не подряд</li>
-      <li><b>первым или последним</b> — в начале или в самом конце</li>
-      <li>Если в улике двое — это разные люди.</li>
-      <li>Совет: начни со времени — больше всего улик про порядок прихода.</li>
-    </ul>
-    <label class="easy">
-      <input type="checkbox" data-act="easy" ${settings.easy ? 'checked' : ''}>
-      <span>Упрощённый режим: последний оставшийся вариант отмечается сам</span>
-    </label>
-    <p class="credits">Музыка: «Drone in D», Kevin MacLeod (<a href="https://incompetech.com" target="_blank" rel="noopener">incompetech.com</a>), лицензия <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. В игре — 90-секундный фрагмент, зацикленный. Выключить — ♪ в шапке.</p>
-    <div class="actions"><button class="btn primary" data-act="close-sheet">Понятно</button></div>`);
-}
-
-const ACCUSE_TITLES = { place: 'Где был?', item: 'Чем?', time: 'Когда пришёл?' };
-
-function accuseSheet() {
-  const names = puzzle.suspects
-    .map((p, g) => `<button class="chip ${draft.g === g ? 'ok' : ''}" data-act="pick-g" data-g="${g}">${p.name}</button>`)
-    .join('');
-  const groups = accuseCategories(puzzle)
-    .map((k) => {
-      const cat = puzzle.categories[k];
-      const chips = cat.values
-        .map((_, v) => `<button class="chip ${draft.values[k] === v ? 'ok' : ''}" data-act="pick-v" data-k="${k}" data-v="${v}">${cap(valueName(puzzle, k, v))}</button>`)
-        .join('');
-      return `<h2>${ACCUSE_TITLES[cat.key]}</h2><div class="pick">${chips}</div>`;
-    })
-    .join('');
-  const ready = draft.g !== null && accuseCategories(puzzle).every((k) => draft.values[k] !== undefined);
-  return overlay(
-    `
-    <h3>Обвинение</h3>
-    <p class="sub">${mainClueText(puzzle)}</p>
-    <h2>Кто?</h2><div class="pick">${names}</div>
-    ${groups}
-    <p class="error">${accuseError}</p>
-    <div class="actions">
-      <button class="btn" data-act="close-sheet">Отмена</button>
-      <button class="btn primary" data-act="submit" ${ready ? '' : 'disabled'}>Обвинить</button>
-    </div>
-    <button class="link" data-act="giveup">Сдаться и узнать ответ</button>`,
-    accuseError ? 'shake' : '',
+function share() {
+  // shareText знает только номер дела; у случайного номера нет — подставим заголовок
+  const text = shareText({ number: puzzle.number ?? 0, game, streak: isToday ? streak(stats, puzzle.number) : 0, url: shareUrl() }).replace(
+    `Дело №${puzzle.number ?? 0}`,
+    title,
   );
+  if (navigator.share) {
+    navigator.share({ text }).catch(() => {});
+    return;
+  }
+  const note = (t) => {
+    ui.shareNote = t;
+    render();
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => note('Скопировано — можно вставить в чат.'), () => note(text));
+  else note(text);
 }
 
-function giveUpSheet() {
-  return overlay(`
-    <h3>Сдаться?</h3>
-    <p class="sub">Покажем ответ, а дело уйдёт в архив нераскрытым.</p>
-    <div class="actions">
-      <button class="btn" data-act="accuse">Ещё подумаю</button>
-      <button class="btn primary" data-act="confirm-giveup">Сдаться</button>
-    </div>`);
-}
-
-function resultSheet() {
-  const culprit = puzzle.suspects[puzzle.culprit];
-  const head = puzzle.categories.map((c) => `<th>${c.title}</th>`).join('');
-  const rows = puzzle.suspects
-    .map((p, g) => {
-      const cells = puzzle.categories.map((_, k) => `<td>${cap(valueName(puzzle, k, puzzle.solution[g][k]))}</td>`).join('');
-      return `<tr class="${g === puzzle.culprit ? 'culprit' : ''}"><td>${p.name}</td>${cells}</tr>`;
-    })
-    .join('');
-  const top = game.solved
-    ? '<div class="stamp">Раскрыто</div>'
-    : '<div class="stamp lost">Не раскрыто</div>';
-  return overlay(`
-    ${top}
-    <div class="confession">
-      ${portrait(culprit.role)}
-      <div>
-        <p class="quote">«${confessionText(puzzle)}»</p>
-        <p class="who">— ${culprit.name}, ${culprit.role}</p>
-      </div>
-    </div>
-    ${
-      story
-        ? `<h2>Из дневника следователя</h2><div class="diary">${story.text
-            .split('\n')
-            .map((p) => `<p>${escapeHtml(p)}</p>`)
-            .join('')}</div>`
-        : ''
-    }
-    <table class="solution"><tr><th></th>${head}</tr>${rows}</table>
-    <div class="stats">
-      <span>Время ${clock(game.elapsed)}</span>
-      <span>Неверных обвинений: ${game.wrong}</span>
-      <span>Подсказок: ${game.hints}</span>
-    </div>
-    ${isToday ? recordBlock() : ''}
-    <div class="actions">
-      <button class="btn" data-act="close-sheet">К делу</button>
-      <button class="btn primary" data-act="share">Поделиться</button>
-    </div>
-    <p class="share-note">${shareNote}</p>`);
-}
-
-// Серия и отсчёт до следующего дела.
-function recordBlock() {
-  const days = streak(stats, puzzle.number);
-  const total = solvedCount(stats);
-  return `
-    <div class="record">
-      <div><b>${days}</b><span>${plural(days, 'день', 'дня', 'дней')} подряд</span></div>
-      <div><b>${total}</b><span>${plural(total, 'дело', 'дела', 'дел')} раскрыто</span></div>
-      <div><b id="countdown">${untilMidnight()}</b><span>до нового дела</span></div>
-    </div>`;
-}
-
-const SHEETS = { help: helpSheet, accuse: accuseSheet, giveup: giveUpSheet, result: resultSheet };
-
-const wide = () => matchMedia('(min-width: 960px)').matches;
-
-function render() {
-  const over = isOver(game);
-  const keep = app.querySelector('.clues')?.scrollTop ?? 0; // прокрутка списка улик переживает перерисовку
-  document.body.classList.toggle('clues-closed', !settings.cluesOpen);
-  app.innerHTML = `
-    <header class="top">
-      <div>
-        <div class="case-no">Дело №${puzzle.number}</div>
-        <div class="date">${dateLabel(key)}</div>
-      </div>
-      <div class="top-right">
-        <span class="timer" id="timer">${clock(game.elapsed)}</span>
-        <button class="icon-btn ${isPlaying() ? 'playing' : ''}" data-act="music" aria-label="${settings.music ? 'Выключить музыку' : 'Включить музыку'}" aria-pressed="${settings.music}">${settings.music ? '♪' : '<s>♪</s>'}</button>
-        <button class="icon-btn" data-act="help" aria-label="Как играть">?</button>
-      </div>
-    </header>
-
-    <section class="story">
-      <div class="banner">${scene(puzzle.theme, puzzle.story.art)}${STAMP}</div>
-      <p class="place-tag">${themeTitle(puzzle)}</p>
-      <p class="intro">${introText(puzzle)}</p>
-      <div class="main-clue"><span class="tag">Главная улика</span>${mainClueText(puzzle)}</div>
-    </section>
-
-    <section class="evidence ${settings.cluesOpen ? '' : 'closed'}">
-      <button class="evidence-head" data-act="toggle-clues" aria-expanded="${settings.cluesOpen}">
-        <span>Улики · ${puzzle.clues.length}</span><span class="chev">${settings.cluesOpen ? '▾ свернуть' : '▴ показать'}</span>
-      </button>
-      ${hintNow ? `<div class="hint"><p>${hintNow.text}</p><button data-act="close-hint" aria-label="Закрыть">✕</button></div>` : ''}
-      <ol class="clues">${puzzle.clues.map(clueItem).join('')}</ol>
-    </section>
-
-    <section class="board">
-      <h2>Подозреваемые</h2>
-      <div class="cards">${puzzle.suspects.map(card).join('')}</div>
-    </section>
-
-    <nav class="bar">
-      <button class="undo" data-act="undo" aria-label="Отменить" ${game.history.length && !over ? '' : 'disabled'}>↶</button>
-      <div class="mode" role="group" aria-label="Что ставить">
-        <button class="${mode === CROSS ? 'on' : ''}" data-act="mode" data-mode="${CROSS}" aria-label="Вычёркивать">✗</button>
-        <button class="${mode === CHECK ? 'on' : ''}" data-act="mode" data-mode="${CHECK}" aria-label="Отмечать">✓</button>
-      </div>
-      <button data-act="hint" ${over ? 'disabled' : ''}>Подсказка</button>
-      ${over ? '<button class="primary" data-act="show-result">Итог</button>' : '<button class="primary" data-act="accuse">Обвинить</button>'}
-    </nav>
-
-    ${sheet ? SHEETS[sheet]() : ''}
-  `;
-  const list = app.querySelector('.clues');
-  if (list) list.scrollTop = keep;
-  if (sheet === 'result') loadStory();
-}
-
-// После подсказки: прокрутить список улик к нужной улике, а страницу — к подсвеченной клетке,
-// чтобы она оказалась в видимой части над панелью улик.
-function reveal() {
-  const list = app.querySelector('.clues');
-  const clue = list?.querySelector('.clue.hl');
-  if (clue) list.scrollTo({ top: clue.offsetTop - 8, behavior: 'smooth' });
-  const cell = app.querySelector('.chip.hl');
-  if (!cell) return;
-  const bottom = wide() ? innerHeight - 80 : app.querySelector('.evidence').getBoundingClientRect().top;
-  const rect = cell.getBoundingClientRect();
-  if (rect.top > 60 && rect.bottom < bottom - 12) return; // и так видно
-  window.scrollTo({ top: scrollY + rect.top - Math.max(60, (bottom - rect.height) / 2), behavior: 'smooth' });
-}
+/* ---------- действия ---------- */
 
 const actions = {
-  mark(el) {
-    tap(game, +el.dataset.g, +el.dataset.k, +el.dataset.v, mode, settings.easy);
-    hintNow = null;
+  cell: (el) => tapCell(+el.dataset.r, +el.dataset.t),
+  pick: (el) => pickClue(+el.dataset.i),
+  use(el) {
+    const i = +el.dataset.i;
+    toggleClue(game, i);
+    sfx('select');
+    changed({ sounds: false });
   },
-  clue(el) {
-    toggleClue(game, +el.dataset.i);
-  },
-  mode(el) {
-    mode = +el.dataset.mode;
-  },
-  undo() {
-    undo(game);
-    hintNow = null;
-  },
-  hint() {
-    hintNow = hint(game, puzzle);
-    settings.cluesOpen = true;
-  },
-  'toggle-clues'() {
-    if (wide()) return false; // на компьютере улики всегда видны
-    settings.cluesOpen = !settings.cluesOpen;
+  step: (el) => stepClue(+el.dataset.dir),
+  'clue-mode'() {
+    settings.clueMode = settings.clueMode === 'list' ? 'one' : 'list';
     saveSettings();
+    render();
+    if (settings.clueMode === 'list' && ui.active !== null && ui.active >= 0) revealClue(ui.active);
   },
+  undo: doUndo,
+  redo: doRedo,
+  reset() {
+    if (!reset(game)) return;
+    ui.hint = null;
+    ui.active = null;
+    sfx('clear');
+    showToast({ text: 'Доска очищена', act: 'toast-undo', label: 'Вернуть' });
+    changed({ sounds: false });
+  },
+  'toast-undo'() {
+    ui.toast = null;
+    clearTimeout(toastTimer);
+    doUndo();
+    render();
+  },
+  hint: doHint,
   'close-hint'() {
-    hintNow = null;
+    ui.hint = null;
+    render();
   },
-  music() {
-    settings.music = !settings.music;
-    saveSettings();
-    if (settings.music) startMusic();
-    else stopMusic();
-  },
-  help() {
-    sheet = 'help';
-  },
-  accuse() {
-    sheet = 'accuse';
-    accuseError = '';
-  },
+  accuse: openAccuse,
   'pick-g'(el) {
-    draft.g = +el.dataset.g;
-    accuseError = '';
+    ui.draft.g = +el.dataset.g;
+    ui.accuseError = '';
+    sfx('select');
+    render();
   },
   'pick-v'(el) {
-    draft.values[+el.dataset.k] = +el.dataset.v;
-    accuseError = '';
+    ui.draft.values[+el.dataset.k] = +el.dataset.v;
+    ui.accuseError = '';
+    sfx('select');
+    render();
   },
   submit() {
-    if (accuse(game, puzzle, draft)) {
-      sheet = 'result';
-      hintNow = null;
-      recordResult();
-    } else {
-      accuseError = `Не сходится. Неверных обвинений: ${game.wrong}.`;
-    }
+    if (accuse(game, puzzle, ui.draft)) return finish('solved');
+    ui.accuseError = `Не сходится. Неверных обвинений: ${game.wrong}.`;
+    save();
+    sfx('wrong');
+    render();
+    replay(app.querySelector('.sheet'), 'shake', 450);
   },
-  giveup() {
-    sheet = 'giveup';
-  },
+  giveup: () => openSheet('giveup'),
   'confirm-giveup'() {
     giveUp(game);
-    sheet = 'result';
-    hintNow = null;
-    recordResult();
-  },
-  'close-sheet'(el, event) {
-    // клик по затемнению закрывает лист, клик внутри листа — нет
-    if (el.classList.contains('overlay') && event.target.closest('[data-stop]')) return false;
-    if (sheet === 'help' && !settings.seenHelp) {
-      settings.seenHelp = true;
-      saveSettings();
-    }
-    sheet = null;
+    finish('gaveup');
   },
   'show-result'() {
-    sheet = 'result';
-    shareNote = '';
+    ui.shareNote = '';
+    openSheet('result');
   },
-  share() {
-    const text = shareText({ number: puzzle.number, game, streak: isToday ? streak(stats, puzzle.number) : 0, url: shareUrl() });
-    if (navigator.share) {
-      navigator.share({ text }).catch(() => {});
-      return false;
-    }
-    navigator.clipboard?.writeText(text).then(
-      () => {
-        shareNote = 'Скопировано — можно вставить в чат.';
-        render();
-      },
-      () => {
-        shareNote = text;
-        render();
-      },
-    );
-    return false;
+  share,
+  'random-case'() {
+    location.href = `?case=${randomKey()}`;
   },
+  brief: () => openSheet('brief'),
+  start,
+  help: () => openSheet('help'),
+  menu: () => openSheet('menu'),
+  sound() {
+    const on = !soundOn();
+    settings.music = on;
+    settings.sfx = on;
+    saveSettings();
+    audio?.refreshAudio();
+    render();
+  },
+  'close-sheet': closeSheet,
+  backdrop: closeSheet,
 };
+
+// Долгое нажатие на клетку — сразу ✓; после него обычный click не должен сработать.
+let press = null;
+let suppressClick = false;
+let lastPointer = 'mouse';
+// Свайп по улике в режиме «по одной».
+let swipe = null;
+let swiped = false;
+
+app.addEventListener('pointerdown', (event) => {
+  lastPointer = event.pointerType;
+  suppressClick = false;
+  swiped = false;
+  const cell = event.target.closest('.cell[data-act]');
+  if (cell && event.pointerType !== 'mouse') {
+    const r = +cell.dataset.r;
+    const t = +cell.dataset.t;
+    press = {
+      x: event.clientX,
+      y: event.clientY,
+      timer: setTimeout(() => {
+        suppressClick = true;
+        press = null;
+        navigator.vibrate?.(12);
+        tapCell(r, t, CHECK);
+      }, 450),
+    };
+  }
+  if (event.target.closest('[data-swipe]')) swipe = { x: event.clientX, y: event.clientY };
+});
+
+app.addEventListener('pointermove', (event) => {
+  if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10) {
+    clearTimeout(press.timer);
+    press = null;
+  }
+});
+
+function endPress(event) {
+  if (press) {
+    clearTimeout(press.timer);
+    press = null;
+  }
+  if (swipe && event.type === 'pointerup') {
+    const dx = event.clientX - swipe.x;
+    const dy = event.clientY - swipe.y;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      swiped = true;
+      stepClue(dx < 0 ? 1 : -1);
+    }
+  }
+  swipe = null;
+}
+app.addEventListener('pointerup', endPress);
+app.addEventListener('pointercancel', endPress);
+
+app.addEventListener('contextmenu', (event) => {
+  const cell = event.target.closest('.cell[data-act]');
+  if (!cell) return;
+  event.preventDefault();
+  // на телефоне долгое нажатие уже обработано таймером
+  if (lastPointer !== 'mouse') return;
+  tapCell(+cell.dataset.r, +cell.dataset.t, CHECK);
+});
 
 app.addEventListener('click', (event) => {
   const el = event.target.closest('[data-act]');
-  if (!el || el.disabled || el.dataset.act === 'easy') return;
-  const action = actions[el.dataset.act];
-  if (!action) return;
-  if (action(el, event) === false) return;
-  save();
-  render();
-  if (el.dataset.act === 'hint') reveal();
+  if (!el || el.disabled) return;
+  const act = el.dataset.act;
+  if (act === 'backdrop' && event.target !== el) return; // клик внутри листа
+  if (act === 'cell' && suppressClick) {
+    suppressClick = false;
+    return;
+  }
+  if (swiped && el.closest('[data-swipe]')) {
+    swiped = false;
+    return;
+  }
+  actions[act]?.(el, event);
 });
 
-// Музыка стартует с первого действия игрока (раньше браузер звук не разрешит).
-// Значок ♪ светится, когда звук действительно идёт.
-playOnGesture(() => settings.music);
-onMusicChange(() => render());
-
+// Настройки в «Как играть».
 app.addEventListener('change', (event) => {
-  if (event.target.dataset.act !== 'easy') return;
-  settings = { ...settings, easy: event.target.checked };
+  const name = event.target.dataset?.set;
+  if (!name) return;
+  settings = { ...settings, [name]: event.target.checked };
   saveSettings();
+  if (name === 'easy') {
+    before = derive();
+    tension();
+  } else audio?.refreshAudio();
+  render();
 });
 
-// Секундомер идёт, только пока страница открыта и дело не закрыто.
+/* ---------- клавиатура ---------- */
+
+function moveFocus(dr, dt) {
+  const [r, t] = ui.focus;
+  ui.focus = [Math.max(0, Math.min(ctx.rows - 1, r + dr)), Math.max(0, Math.min(n - 1, t + dt))];
+  render();
+  cellEl(...ui.focus)?.focus();
+}
+
+function trapFocus(event) {
+  const sheet = app.querySelector('.sheet');
+  if (!sheet) return;
+  const items = [...sheet.querySelectorAll('button:not([disabled]), a[href], input')];
+  if (!items.length) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === sheet)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+const ARROWS = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (ui.sheet) closeSheet();
+    else if (ui.hint || ui.active !== null) {
+      ui.hint = null;
+      ui.active = null;
+      render();
+    }
+    return;
+  }
+  if (ui.sheet) {
+    if (event.key === 'Tab') trapFocus(event);
+    return;
+  }
+  const mod = event.ctrlKey || event.metaKey;
+  // по коду клавиши, а не по букве: в русской раскладке Z — это «я»
+  if (mod && event.code === 'KeyZ') {
+    event.preventDefault();
+    if (event.shiftKey) doRedo();
+    else doUndo();
+    return;
+  }
+  if (mod && event.code === 'KeyY') {
+    event.preventDefault();
+    doRedo();
+    return;
+  }
+  const cell = event.target.closest?.('.cell[data-act]');
+  if (!cell) return;
+  if (ARROWS[event.key]) {
+    event.preventDefault();
+    moveFocus(...ARROWS[event.key]);
+  } else if (event.key === 'Enter' && event.shiftKey) {
+    event.preventDefault();
+    tapCell(+cell.dataset.r, +cell.dataset.t, CHECK);
+  }
+});
+
+// Фокус пришёл на клетку мышью или Tab — запомним её для стрелок.
+app.addEventListener('focusin', (event) => {
+  const cell = event.target.closest?.('.cell[data-act]');
+  if (cell) ui.focus = [+cell.dataset.r, +cell.dataset.t];
+});
+
+/* ---------- секундомер ---------- */
+
+// Идёт после начала расследования и только пока не открыт лист (кроме обвинения).
+const ticking = () => game.started && !isOver(game) && !document.hidden && (!ui.sheet || ui.sheet === 'accuse' || ui.sheet === 'giveup');
+
 setInterval(() => {
   const countdown = document.getElementById('countdown');
   if (countdown) countdown.textContent = untilMidnight();
-  if (isOver(game) || document.hidden || sheet === 'help') return;
+  if (!ticking()) return;
   game.elapsed++;
   const timer = document.getElementById('timer');
   if (timer) timer.textContent = clock(game.elapsed);
@@ -479,5 +910,10 @@ setInterval(() => {
 }, 1000);
 document.addEventListener('visibilitychange', save);
 window.addEventListener('pagehide', save);
+wideQuery.addEventListener('change', () => render());
 
+// Первая отрисовка — без анимаций: колонки, закрытые до перезагрузки, не должны «закрываться» снова.
+document.documentElement.classList.add('boot');
 render();
+tension();
+requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.remove('boot')));

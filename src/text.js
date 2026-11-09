@@ -1,8 +1,33 @@
 // Тексты по-русски: улики, главная улика, подсказки, история дела.
 
 import { THEMES } from './themes.js';
+import { context } from './logic.js';
 
-const capitalize = (t) => t[0].toUpperCase() + t.slice(1);
+// Сущности внутри текста помечаем служебными символами: \u0001kind:id\u0002текст\u0003.
+// clueText их вырезает, clueParts — разбирает на части для подсветки.
+const mark = (kind, id, text) => `\u0001${kind}:${id}\u0002${text}\u0003`;
+const strip = (t) => t.replace(/\u0001[^\u0002]*\u0002/g, '').replace(/\u0003/g, '');
+
+function parse(t) {
+  const parts = [];
+  const re = /\u0001(\w+):(\d+)\u0002([^\u0003]*)\u0003/g;
+  let last = 0;
+  for (const m of t.matchAll(re)) {
+    if (m.index > last) parts.push(t.slice(last, m.index));
+    parts.push({ kind: m[1], id: Number(m[2]), text: m[3] });
+    last = m.index + m[0].length;
+  }
+  if (last < t.length) parts.push(t.slice(last));
+  return parts;
+}
+
+const partText = (part) => (typeof part === 'string' ? part : part.text);
+
+// Заглавная буква — первая буква текста, даже если она внутри пометки.
+function capitalize(t) {
+  const i = t[0] === '\u0001' ? t.indexOf('\u0002') + 1 : 0;
+  return t.slice(0, i) + t[i].toUpperCase() + t.slice(i + 1);
+}
 const byGender = (gender, m, f) => (gender === 'f' ? f : m);
 
 export const valueName = (puzzle, k, v) => puzzle.categories[k].values[v].name;
@@ -20,11 +45,11 @@ function clause(puzzle, s, w) {
   const value = cat.values[s.v];
   switch (cat.key) {
     case 'place':
-      return `кто ${w.was[0]} ${value.loc}`;
+      return `кто ${w.was[0]} ${mark('place', s.v, value.loc)}`;
     case 'item':
-      return `у кого нашли ${value.acc}`;
+      return `у кого нашли ${mark('item', s.v, value.acc)}`;
     case 'time':
-      return `кто ${w.came[0]} в ${value.name}`;
+      return `кто ${w.came[0]} в ${mark('time', s.v, value.name)}`;
     default:
       throw new Error(`unknown category ${cat.key}`);
   }
@@ -36,7 +61,7 @@ const PRONOUN = { nom: 'тот', gen: 'того', ins: 'тем' };
 function subject(puzzle, s, form, w) {
   if (s.g !== undefined) {
     const person = puzzle.suspects[s.g];
-    return { text: form === 'nom' ? person.name : person[form], gender: person.gender };
+    return { text: mark('who', s.g, form === 'nom' ? person.name : person[form]), gender: person.gender };
   }
   return { text: `${PRONOUN[form]}, ${clause(puzzle, s, w)}`, gender: 'm', open: true };
 }
@@ -50,7 +75,7 @@ function sentence(...parts) {
   return `${capitalize(words.join(' '))}.`;
 }
 
-// «Вера была в подвале», «Верёвку нашли не у Веры», «Вера пришла в 21:30».
+// «Вера была в подвале», «Верёвку нашли не у Веры», «Вера пришла в 21:30». Текст с пометками.
 function fact(puzzle, s, k, v, negative, say = 0) {
   const w = WORDS[say];
   const cat = puzzle.categories[k];
@@ -59,19 +84,20 @@ function fact(puzzle, s, k, v, negative, say = 0) {
   const S = (form) => subject(puzzle, s, form, w);
   switch (cat.key) {
     case 'place':
-      return sentence(S('nom'), `${not}${verb(w.was, S('nom').gender)} ${value.loc}`);
+      return sentence(S('nom'), `${not}${verb(w.was, S('nom').gender)} ${mark('place', v, value.loc)}`);
     case 'item':
       return say === 1
-        ? sentence('у', S('gen'), `${not}нашли ${value.acc}`)
-        : sentence(value.acc, `нашли ${not}у`, S('gen'));
+        ? sentence('у', S('gen'), `${not}нашли ${mark('item', v, value.acc)}`)
+        : sentence(mark('item', v, value.acc), `нашли ${not}у`, S('gen'));
     case 'time':
-      return sentence(S('nom'), `${verb(w.came, S('nom').gender)} ${not}в ${value.name}`);
+      return sentence(S('nom'), `${verb(w.came, S('nom').gender)} ${not}в ${mark('time', v, value.name)}`);
     default:
       throw new Error(`unknown category ${cat.key}`);
   }
 }
 
-export function clueText(puzzle, clue) {
+// Текст улики с пометками сущностей.
+function clueMarked(puzzle, clue) {
   const say = clue.say ?? 0;
   const w = WORDS[say];
   const S = (s, form = 'nom') => subject(puzzle, s, form, w);
@@ -105,35 +131,64 @@ export function clueText(puzzle, clue) {
   }
 }
 
+export const clueText = (puzzle, clue) => strip(clueMarked(puzzle, clue));
+
+// Улика по частям: строки и сущности { kind, id, text }.
+export const clueParts = (puzzle, clue) => parse(clueMarked(puzzle, clue));
+
 // Факт про человека — для подсказок: «Вера не была в подвале».
 export function factText(puzzle, g, k, v, negative = false) {
-  return fact(puzzle, { g }, k, v, negative);
+  return strip(fact(puzzle, { g }, k, v, negative));
 }
 
-// Подсказка словами по шагу решателя. poss — что игрок уже знает (до шага).
-export function stepText(puzzle, step, poss) {
+export const GROUP_TITLES = { who: 'Кто пришёл', place: 'Где был', item: 'Что нашли' };
+
+// Что стоит в строке доски: { kind, v, name } — имя человека или название места/предмета (как в categories[k].values[v].name).
+export function rowInfo(puzzle, row) {
+  const { n, groups } = context(puzzle);
+  const group = groups[Math.floor(row / n)];
+  const v = row % n;
+  const name = group.key === 'who' ? puzzle.suspects[v].name : puzzle.categories[group.k].values[v].name;
+  return { kind: group.key, v, name };
+}
+
+const slotTime = (puzzle, slot) => puzzle.categories[context(puzzle).orderK].values[slot].name;
+
+// «У Веры», «У места «часовня»», «У предмета «ремень»».
+function rowOwner(puzzle, row) {
+  const info = rowInfo(puzzle, row);
+  if (info.kind === 'who') return `У ${puzzle.suspects[info.v].gen}`;
+  return `У ${info.kind === 'place' ? 'места' : 'предмета'} «${info.name}»`;
+}
+
+// Подсказка словами по шагу решателя (logic.nextStep). detail: false — куда смотреть, true — что отметить.
+export function hintText(puzzle, step, detail) {
   const { reason, removals } = step;
   if (reason.kind === 'clue') {
-    // что следует из улики про первого человека: «Степан пришёл в 21:00» или «вычеркни у Степана: …»
-    const [g, k] = removals[0];
-    const removed = removals.filter(([a, b]) => a === g && b === k).map(([, , v]) => v);
-    const left = [];
-    for (let v = 0; v < puzzle.suspects.length; v++) {
-      if ((poss[g][k] >> v) & 1 && !removed.includes(v)) left.push(v);
+    const num = reason.index + 1;
+    if (!detail) return `Посмотри на улику №${num}.`;
+    // вычеркнутое по строкам — в порядке появления, время по порядку
+    const byRow = new Map();
+    for (const [row, slot] of removals) {
+      if (!byRow.has(row)) byRow.set(row, []);
+      byRow.get(row).push(slot);
     }
-    let detail;
-    if (left.length === 1) detail = factText(puzzle, g, k, left[0]);
-    else if (removed.length === 1) detail = factText(puzzle, g, k, removed[0], true);
-    else detail = `Вычеркни у ${puzzle.suspects[g].gen}: ${removed.map((v) => valueName(puzzle, k, v)).join(', ')}.`;
-    const more = removals.length > removed.length ? ' Всё, что из неё следует, подсвечено.' : '';
-    return `Улика №${reason.index + 1}. ${detail}${more}`;
+    const list = [...byRow].map(([row, slots]) => {
+      const times = [...slots].sort((a, b) => a - b).map((s) => slotTime(puzzle, s));
+      return `${rowInfo(puzzle, row).name} — не ${times.join(', ')}`;
+    });
+    const what = list.length ? ` ${capitalize(list.join('; '))}.` : '';
+    return `Улика №${num}.${what} Вычеркни подсвеченное.`;
   }
-  const person = puzzle.suspects[reason.g];
-  const name = valueName(puzzle, reason.k, reason.v);
+  const time = slotTime(puzzle, reason.slot);
   if (reason.kind === 'single') {
-    return `У ${person.gen} остался один вариант — «${name}». Значит, у остальных его нет.`;
+    const text = `${rowOwner(puzzle, reason.row)} остался один вариант времени`;
+    return detail ? `${text} — ${time}. Поставь ✓.` : `${text}.`;
   }
-  return `Вариант «${name}» остался только у ${person.gen}. Значит, остальное у ${person.gen} можно вычеркнуть.`;
+  const info = rowInfo(puzzle, reason.row);
+  const title = GROUP_TITLES[info.kind];
+  if (!detail) return `Посмотри на колонку ${time}: в строках «${title}» там остался один вариант.`;
+  return `В колонке ${time} в строках «${title}» остался один вариант — ${info.name}. Поставь ✓.`;
 }
 
 export const STORY = {
@@ -161,6 +216,23 @@ export function mainClueText(puzzle) {
   const { k, v } = puzzle.culpritClue;
   const cat = puzzle.categories[k];
   return THEMES[puzzle.theme].main[cat.key][puzzle.story.main].text(cat.values[v]);
+}
+
+// Главная улика по частям. Темы сами решают, какое поле значения взять (name, loc, to, acc),
+// поэтому помечаем все поля, а регистр букв берём из готового текста (cap() мог поднять первую).
+export function mainClueParts(puzzle) {
+  const { k, v } = puzzle.culpritClue;
+  const cat = puzzle.categories[k];
+  const value = cat.values[v];
+  const marked = Object.fromEntries(Object.entries(value).map(([f, t]) => [f, typeof t === 'string' ? mark(cat.key, v, t) : t]));
+  const parts = parse(THEMES[puzzle.theme].main[cat.key][puzzle.story.main].text(marked));
+  const plain = mainClueText(puzzle);
+  let at = 0;
+  return parts.map((part) => {
+    const text = plain.slice(at, at + partText(part).length);
+    at += text.length;
+    return typeof part === 'string' ? text : { ...part, text };
+  });
 }
 
 export function confessionText(puzzle) {
