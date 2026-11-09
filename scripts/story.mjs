@@ -1,11 +1,13 @@
 // История дела от нейросети. Запускается раз в день из GitHub Actions (.github/workflows/story.yml),
 // можно и вручную: GROQ_API_KEY=… GEMINI_API_KEY=… node scripts/story.mjs
 //
-// Пишет stories/<дата>.json для вчера, сегодня и двух дней вперёд (кроме уже готовых),
-// чтобы история была у игроков в любом часовом поясе.
+// Пишет stories/<дата>.json — { date, number, id, model, motive?, text } — для вчера, сегодня и двух дней
+// вперёд, чтобы история была у игроков в любом часовом поясе. Готовый файл не трогаем, если он
+// написан для этого же дела (тот же id); от другого дела (генератор дел меняли) — пишем заново.
+// Мотив — подпись над историей: не прошёл проверку — сохраняем историю без него.
 //
 //   --date 2026-11-08   только эта дата
-//   --force             переписать, даже если файл уже есть
+//   --force             переписать, даже если файл уже есть и он от этого дела
 //                       (FORCE=true в окружении — то же самое; так делает ручной запуск в Actions)
 //   --mock              без нейросети: заглушка, чтобы проверить весь путь
 //   --out <папка>       куда писать (по умолчанию stories)
@@ -16,9 +18,20 @@
 // Ключи: GROQ_API_KEY (модели с «/» в имени, например openai/gpt-oss-120b) и GEMINI_API_KEY (Gemini и Gemma).
 // (GitHub Models пробовали как запасной вариант, но сервис закрыт с 30 июля 2026.)
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { caseId, dailyPuzzle, isDateKey } from '../src/daily.js';
-import { buildPrompt, clean, interactionText, looseStory, mockStory, validate } from './story-lib.mjs';
+import {
+  buildPrompt,
+  clean,
+  interactionText,
+  isCurrent,
+  looseAnswer,
+  mockMotive,
+  mockStory,
+  normalMotive,
+  validate,
+  validateMotive,
+} from './story-lib.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -92,12 +105,12 @@ async function post(name, url, headers, body) {
   }
 }
 
-// Ответ модели — JSON {"story": "…"}; достаём текст.
-function storyFrom(name, text) {
+// Ответ модели — JSON {"motive": "…", "story": "…"}; без истории ответ не годится, без мотива — годится.
+function answerFrom(name, text) {
   try {
-    const story = JSON.parse(text).story;
+    const { story, motive } = JSON.parse(text);
     if (typeof story !== 'string' || !story.trim()) throw new Error('нет поля story');
-    return story;
+    return { story, motive: typeof motive === 'string' ? motive : '' };
   } catch (error) {
     throw fail(`${name}: ответ не в формате JSON (${error.message})`, 599);
   }
@@ -114,7 +127,11 @@ async function askGemini(model, prompt) {
         temperature: 0.7,
         maxOutputTokens: 8192, // с запасом: новые модели сперва «думают»
         responseMimeType: 'application/json',
-        responseSchema: { type: 'OBJECT', properties: { story: { type: 'STRING' } }, required: ['story'] },
+        responseSchema: {
+          type: 'OBJECT',
+          properties: { motive: { type: 'STRING' }, story: { type: 'STRING' } },
+          required: ['motive', 'story'],
+        },
       },
     },
   );
@@ -124,7 +141,7 @@ async function askGemini(model, prompt) {
   const reason = candidate?.finishReason ?? 'нет кандидатов';
   if (!text) throw fail(`${model}: пустой ответ (${reason})`, 599);
   if (reason !== 'STOP') throw fail(`${model}: ответ не закончен (${reason})`, 599);
-  return storyFrom(model, text);
+  return answerFrom(model, text);
 }
 
 // Gemma 4 — через Interactions API: так её подключает документация Google
@@ -145,9 +162,9 @@ async function askGemma(model, prompt) {
   if (data.status && data.status !== 'completed') throw fail(`${model}: ответ не закончен (${data.status})`, 599);
   const text = interactionText(data);
   if (!text) throw fail(`${model}: пустой ответ`, 599);
-  const story = looseStory(text);
-  if (!story) throw fail(`${model}: не удалось разобрать ответ: ${text.slice(0, 60)}`, 599);
-  return story;
+  const answer = looseAnswer(text);
+  if (!answer) throw fail(`${model}: не удалось разобрать ответ: ${text.slice(0, 60)}`, 599);
+  return answer;
 }
 
 // Groq — OpenAI-совместимый API (по документации console.groq.com/docs/openai);
@@ -160,7 +177,7 @@ async function askGroq(model, prompt) {
     {
       model,
       messages: [
-        { role: 'system', content: 'Ты пишешь короткие мрачные детективные развязки на русском языке.' },
+        { role: 'system', content: 'Ты пишешь короткие мрачные истории о людях и их мотивах на русском языке.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.7,
@@ -169,7 +186,12 @@ async function askGroq(model, prompt) {
         json_schema: {
           name: 'story',
           strict: true,
-          schema: { type: 'object', properties: { story: { type: 'string' } }, required: ['story'], additionalProperties: false },
+          schema: {
+            type: 'object',
+            properties: { motive: { type: 'string' }, story: { type: 'string' } },
+            required: ['motive', 'story'],
+            additionalProperties: false,
+          },
         },
       },
     },
@@ -178,9 +200,9 @@ async function askGroq(model, prompt) {
   const text = choice?.message?.content ?? '';
   if (!text) throw fail(`${model}: пустой ответ (${choice?.finish_reason ?? 'нет вариантов'})`, 599);
   if (choice.finish_reason && choice.finish_reason !== 'stop') throw fail(`${model}: ответ не закончен (${choice.finish_reason})`, 599);
-  const story = looseStory(text);
-  if (!story) throw fail(`${model}: не удалось разобрать ответ: ${text.slice(0, 60)}`, 599);
-  return story;
+  const answer = looseAnswer(text);
+  if (!answer) throw fail(`${model}: не удалось разобрать ответ: ${text.slice(0, 60)}`, 599);
+  return answer;
 }
 
 // Кто отвечает за модель: «/» в имени — Groq, gemma-… — Gemma (Interactions API), иначе Gemini.
@@ -192,23 +214,33 @@ function provider(name) {
 const MODELS = MODEL_ORDER.filter((name) => provider(name)).map((name) => ({ name, ask: provider(name) }));
 const broken = new Set(); // модели, ответившие ошибкой: в этом запуске к ним больше не обращаемся
 
+// Мотив для файла: чистим и проверяем; плохой — null (история уйдёт без него, с предупреждением).
+function motiveFor(date, raw, puzzle) {
+  const motive = normalMotive(clean(raw ?? ''), puzzle);
+  const { ok, problems } = validateMotive(motive, puzzle);
+  if (ok) return motive;
+  console.warn(`  ${date}: мотив не прошёл проверку — сохраняем без него (${problems.join('; ')})${motive ? `: ${motive}` : ''}`);
+  return null;
+}
+
 // Каждой модели по одному запросу, по порядку; первая история, прошедшая проверку, — наша.
 // null — не ответила ни одна модель (тогда запуск останавливается: остальное допишет следующий).
 async function generateText(puzzle) {
   const prompt = buildPrompt(puzzle);
   let answered = false;
   for (const model of MODELS.filter((m) => !broken.has(m.name))) {
-    let text;
+    let answer;
     try {
-      text = clean(await model.ask(model.name, prompt));
+      answer = await model.ask(model.name, prompt);
     } catch (error) {
       broken.add(model.name);
       console.warn(`  ${error.message}`);
       continue;
     }
     answered = true;
+    const text = clean(answer.story);
     const { ok, problems } = validate(text, puzzle);
-    if (ok) return { text, model: model.name };
+    if (ok) return { text, motive: answer.motive, model: model.name };
     console.warn(`  ${model.name}: не прошла проверку — ${problems.join('; ')}`);
     console.warn(`    текст: ${text.replace(/\s+/g, ' ').slice(0, 600)}`);
   }
@@ -225,21 +257,25 @@ async function main() {
   let failed = 0;
   for (const date of dates()) {
     const file = `${outDir}/${date}.json`;
-    if (existsSync(file) && !force) {
-      console.log(`${date}: уже есть`);
-      continue;
-    }
     const puzzle = dailyPuzzle(date);
+    if (existsSync(file) && !force) {
+      if (isCurrent(readFileSync(file, 'utf8'), puzzle)) {
+        console.log(`${date}: уже есть`);
+        continue;
+      }
+      console.log(`${date}: история от другого дела — пишем заново`);
+    }
     try {
-      const result = mock ? { text: mockStory(puzzle), model: 'mock' } : await generateText(puzzle);
+      const result = mock ? { text: mockStory(puzzle), motive: mockMotive(puzzle), model: 'mock' } : await generateText(puzzle);
       if (!result) {
         failed++;
         console.warn(`${date}: история не прошла проверку — пропускаем`);
         continue;
       }
-      const story = { date, number: puzzle.number, id: caseId(puzzle), model: result.model, text: result.text };
+      const motive = motiveFor(date, result.motive, puzzle);
+      const story = { date, number: puzzle.number, id: caseId(puzzle), model: result.model, ...(motive && { motive }), text: result.text };
       writeFileSync(file, `${JSON.stringify(story, null, 2)}\n`);
-      console.log(`${date}: готово (${result.model}, ${result.text.split(/\s+/).length} слов)`);
+      console.log(`${date}: готово (${result.model}, ${result.text.split(/\s+/).length} слов; мотив: ${motive ?? 'нет'})`);
     } catch (error) {
       failed++;
       console.error(`${date}: ${error.message}`);

@@ -1,7 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dailyPuzzle } from '../src/daily.js';
-import { buildPrompt, clean, facts, mockStory, validate } from '../scripts/story-lib.mjs';
+import { caseId, dailyPuzzle } from '../src/daily.js';
+import { THEMES } from '../src/themes.js';
+import { confessionText } from '../src/text.js';
+import {
+  BODY_NOTE,
+  buildPrompt,
+  clean,
+  facts,
+  isCurrent,
+  looseAnswer,
+  mockMotive,
+  mockStory,
+  normalMotive,
+  validate,
+  validateMotive,
+} from '../scripts/story-lib.mjs';
 import { days } from './helpers.js';
 
 const keys = ['2026-11-06', '2026-11-07', '2026-11-08', '2026-11-11'];
@@ -15,8 +29,26 @@ test('запрос содержит все факты дела и преступ
       assert.ok(prompt.includes(f.place.loc), key);
       assert.ok(prompt.includes(f.item.acc), key);
     }
-    assert.ok(prompt.includes(`Преступник — ${p.suspects[p.culprit].name}`), key);
+    const culprit = p.suspects[p.culprit];
+    assert.ok(prompt.includes(`Преступник — ${culprit.name} (${culprit.role}`), key);
+    assert.ok(prompt.includes(`«${confessionText(p)}»`), key);
+    assert.ok(prompt.includes(`Исходи из его роли (${culprit.role})`), key);
+    assert.ok(prompt.includes('Ответ — JSON вида {"motive": "…", "story": "…"}'), key);
+    assert.ok(!prompt.includes('следователя, прошедшее'), key);
   }
+});
+
+test('«тела не нашли» — только в делах, где тела нет', () => {
+  const body = (p) => THEMES[p.theme].intros[p.story.intro].body;
+  const all = days(60, '2026-11-01').map(dailyPuzzle);
+  const missing = all.find((p) => body(p) === false);
+  const found = all.find((p) => body(p) !== false);
+  assert.ok(missing && found, 'за 60 дней нет дела с телом или без тела');
+  assert.ok(buildPrompt(missing).includes('тела не нашли'));
+  assert.ok(buildPrompt(missing).includes(BODY_NOTE));
+  assert.ok(!buildPrompt(found).includes('тела не нашли'));
+  // без пометки нет и лишней пустой строки между правилами
+  assert.ok(buildPrompt(found).includes('только если так сказано в главной улике.\n\nОтвет'));
 });
 
 test('заглушка проходит проверку во всех темах', () => {
@@ -111,28 +143,27 @@ test('проверка фактов: чужое время или место в 
   assert.deepEqual(validate(fair, p).problems, []);
 });
 
-test('хорошая история модели за 7 ноября проходит проверку', () => {
-  // по образцу настоящего ответа модели; факты берём из нынешнего дела
+test('хорошая история в новом духе проходит проверку', () => {
+  // мотив, та ночь, маленькая тайна невиновного, признание дословно, короткий финал
   const p = dailyPuzzle('2026-11-07');
   const all = facts(p);
   const c = all.find((f) => f.culprit);
+  const o = all.find((f) => !f.culprit);
   const x = (m, f) => (c.person.gender === 'f' ? f : m);
-  const innocents = all
-    .filter((f) => !f.culprit)
-    .map((f) => `${f.person.name} — ${f.place.loc}, у ${f.person.gender === 'f' ? 'неё' : 'него'} нашли ${f.item.acc}`)
-    .join('; ');
+  const y = (m, f) => (o.person.gender === 'f' ? f : m);
   const text = [
-    'Старый граф собрал гостей в усадьбе, чтобы огласить завещание, но до утра не дожил.',
-    `Собака во дворе завыла в ${c.time.name} — именно в этот момент пришёл преступник.`,
-    `Это сразу вычеркнуло из списка подозреваемых остальных: ${innocents}.`,
-    `Лишь ${c.person.name} ${x('пришёл', 'пришла')} в ${c.time.name}, затаившись ${c.place.loc}, где у ${x('него', 'неё')} и нашли ${c.item.acc}.`,
-    `${x('Загнанный', 'Загнанная')} в угол, ${x('он', 'она')} тихо ${x('произнёс', 'произнесла')}: «Завещание. Всё дело в завещании. Остальное вы и так знаете.»`,
-    `В ${x('его', 'её')} померкших глазах я увидел лишь холодную, нечеловеческую пустоту.`,
+    `Двадцать лет назад граф выгнал из дома отца ${c.person.gen}, и тот так и не оправился.`,
+    `Много лет спустя ${x('он', 'она')} ${x('вернулся', 'вернулась')} в усадьбу под чужой маской — ${x('тихим', 'тихой')} и ${x('услужливым', 'услужливой')}.`,
+    `В ${c.time.name} ${c.person.name} ${x('пришёл', 'пришла')} и ${x('встал', 'встала')} ${c.place.loc}, где граф каждую ночь проходил один.`,
+    `У ${x('него', 'неё')} потом нашли ${c.item.acc}, и объяснить это было нечем.`,
+    `${o.person.name} в ту же ночь ${y('пришёл', 'пришла')} в ${o.time.name} и ${y('был', 'была')} ${o.place.loc} совсем по другой причине: ${y('он', 'она')} тайком ${y('писал', 'писала')} письма, которые никогда не ${y('решался', 'решалась')} отправить.`,
+    `Поэтому на допросе ${y('он', 'она')} ${y('отвечал', 'отвечала')} невпопад, а у ${y('него', 'неё')} нашли ${o.item.acc}.`,
+    `Когда всё открылось, ${c.person.name} не ${x('стал', 'стала')} спорить: «${confessionText(p)}»`,
+    'Портрет графа в гостиной с утра повернули к стене.',
   ].join(' ');
   assert.deepEqual(validate(text, p).problems, []);
   // а если перепутать место преступника с чужим — проверка это видит
-  const other = all.find((f) => !f.culprit);
-  const swapped = text.replace(`затаившись ${c.place.loc}`, `затаившись ${other.place.loc}`);
+  const swapped = text.replace(`встала ${c.place.loc}`, `встала ${o.place.loc}`).replace(`встал ${c.place.loc}`, `встал ${o.place.loc}`);
   assert.ok(validate(swapped, p).problems.some((x) => x.includes('приписано не тому')));
 });
 
@@ -173,4 +204,80 @@ test('время словами не проходит: «к двадцати т�
     assert.ok(validate(`${base} ${phrase}`, p).problems.some((x) => x.startsWith('время словами')), phrase);
   }
   assert.deepEqual(validate(base, p).problems, []);
+});
+
+test('мягкий разбор ответа с мотивом: JSON, ```json, без мотива, просто текст, мусор', () => {
+  assert.deepEqual(looseAnswer('{"motive": "долг", "story": "Текст."}'), { story: 'Текст.', motive: 'долг' });
+  assert.deepEqual(looseAnswer('```json\n{"motive": "долг", "story": "Текст."}\n```'), { story: 'Текст.', motive: 'долг' });
+  assert.deepEqual(looseAnswer('{"story": "Текст."}'), { story: 'Текст.', motive: '' });
+  assert.deepEqual(looseAnswer('Просто история без скобок.'), { story: 'Просто история без скобок.', motive: '' });
+  assert.equal(looseAnswer('{"motive": "долг", сломано'), null);
+  assert.equal(looseAnswer('{"motive": "долг"}'), null);
+});
+
+test('первое лицо не проходит, «я» внутри признания — можно', () => {
+  const p = dailyPuzzle('2026-11-06');
+  const base = mockStory(p);
+  assert.ok(validate(`Я вошёл в кабинет первым. ${base}`, p).problems.includes('от первого лица — нужно третье'));
+  for (const phrase of ['Мне было не по себе.', 'Он посмотрел на меня.', 'Со мной никто не спорил, и я ушёл.', 'Перед мной лежал ключ.']) {
+    assert.ok(validate(`${base} ${phrase}`, p).problems.includes('от первого лица — нужно третье'), phrase);
+  }
+  // в признании «я» законно; «Яков», «мнение», «земля» — не местоимения
+  assert.ok(base.includes('«'));
+  assert.ok(!validate(`${base} Она шепнула: «Я вошла в кабинет первой, и мне не стыдно».`, p).problems.includes('от первого лица — нужно третье'));
+  assert.ok(!validate(`${base} Его мнение о земле и семье никого не волновало.`, p).problems.includes('от первого лица — нужно третье'));
+});
+
+test('проверка мотива', () => {
+  const p = dailyPuzzle('2026-11-06');
+  const culprit = p.suspects[p.culprit];
+  const stranger = ['Вера', 'Глеб', 'Яков', 'Зоя'].find((n) => !p.suspects.some((s) => s.name === n));
+  for (const good of ['долг, который хозяин отказался простить', 'страх разоблачения', `месть за брата, которого ${culprit.name} так и не простил`, mockMotive(p)]) {
+    assert.deepEqual(validateMotive(good, p).problems, [], good);
+  }
+  const bad = [
+    '',
+    '   ',
+    'месть',
+    'долг '.repeat(15).trim(),
+    `${'очень '.repeat(17)}долгий мотив`,
+    'встреча в 20:15, которую нельзя было пропустить',
+    `ревность к ${stranger === 'Зоя' ? 'Зое' : stranger}`,
+    `ревность, о которой знал ${stranger}`,
+    'старый debt за дом',
+    'долг\nи наследство',
+    '**шантаж** и деньги',
+  ];
+  for (const motive of bad) assert.equal(validateMotive(motive, p).ok, false, motive);
+  assert.equal(validateMotive(undefined, p).ok, false);
+});
+
+test('мотив для показа: кавычки, точка, маленькая буква — кроме имени', () => {
+  const p = dailyPuzzle('2026-11-06');
+  const culprit = p.suspects[p.culprit];
+  assert.equal(normalMotive('  Долг, который хозяин отказался простить.  ', p), 'долг, который хозяин отказался простить');
+  assert.equal(normalMotive('«Страх разоблачения»', p), 'страх разоблачения');
+  assert.equal(normalMotive('"Месть за брата."', p), 'месть за брата');
+  assert.equal(normalMotive('месть…', p), 'месть…');
+  assert.equal(normalMotive(`${culprit.name} не смог простить старый долг.`, p), `${culprit.name} не смог простить старый долг`);
+  assert.equal(normalMotive(`${culprit.gen} давний страх`, p), `${culprit.gen} давний страх`);
+});
+
+test('готовый файл истории: свежий, только если id того же дела', () => {
+  const p = dailyPuzzle('2026-11-10');
+  const json = (id) => JSON.stringify({ date: '2026-11-10', number: p.number, id, model: 'mock', text: 'Текст.' });
+  assert.equal(isCurrent(json(caseId(p)), p), true);
+  assert.equal(isCurrent(json(caseId(p) + 1), p), false);
+  assert.equal(isCurrent(json(undefined), p), false);
+  assert.equal(isCurrent('{"id": 1', p), false);
+  assert.equal(isCurrent('', p), false);
+  assert.equal(isCurrent('null', p), false);
+});
+
+test('заглушка без тела не пишет об убийстве', () => {
+  const missing = days(60, '2026-11-01')
+    .map(dailyPuzzle)
+    .filter((p) => THEMES[p.theme].intros[p.story.intro].body === false);
+  assert.ok(missing.length);
+  for (const p of missing) assert.doesNotMatch(mockStory(p), /(^|[^а-яё])(убил|убит|убийств|тела?(?![а-яё])|труп|всё было кончено)/i);
 });

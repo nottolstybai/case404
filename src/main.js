@@ -608,7 +608,9 @@ async function loadStory() {
     if (!response.ok) return;
     const data = await response.json();
     if (data.id !== id || typeof data.text !== 'string') return;
-    story = { id, text: data.text };
+    // мотива может не быть: генератор сохраняет историю и без него
+    const motive = typeof data.motive === 'string' && data.motive.trim() ? data.motive.trim() : null;
+    story = { id, text: data.text, motive };
     if (ui.sheet === 'result') render();
   } catch {
     // истории нет — итог покажем без неё

@@ -182,7 +182,9 @@ function result(S) {
   const culprit = puzzle.suspects[puzzle.culprit];
   const stamp = game.solved ? '<div class="stamp">Раскрыто</div>' : '<div class="stamp lost">Не раскрыто</div>';
   const story = S.story
-    ? `<h3 class="sec">Из дневника следователя</h3><div class="diary">${S.story.text
+    ? `<h3 class="sec">Что случилось той ночью</h3>${
+        S.story.motive ? `<p class="motive"><span class="tag">Мотив</span>${esc(cap(S.story.motive))}</p>` : ''
+      }<div class="diary">${S.story.text
         .split('\n')
         .filter((p) => p.trim())
         .map((p) => `<p>${esc(p)}</p>`)

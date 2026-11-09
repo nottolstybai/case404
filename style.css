@@ -708,6 +708,8 @@ kbd { display: inline-block; min-width: 22px; margin: 0 1px; padding: 0 5px; bor
 .sep { margin: 0 6px; color: var(--muted); }
 .chron li.culprit { background: var(--red-soft); box-shadow: inset 3px 0 0 var(--red); }
 .chron li.culprit .ch-role { color: #e05a4b; }
+.motive { margin: 0 0 10px; font-size: 16px; font-style: italic; }
+.motive .tag { font-style: normal; color: var(--muted); }
 .diary { margin: 0 0 6px; padding: 2px 0 2px 14px; border-left: 2px solid var(--amber); }
 .diary p { margin: 0 0 10px; font-size: 16px; line-height: 1.55; }
 .diary p:last-child { margin-bottom: 0; }
