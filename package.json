@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "stamp": "node scripts/stamp.mjs"
+    "stamp": "node scripts/stamp.mjs",
+    "og": "node scripts/og.mjs"
   }
 }

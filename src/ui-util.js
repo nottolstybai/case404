@@ -47,7 +47,7 @@ export const ICONS = {
   one: svg('<rect x="3.5" y="5" width="17" height="14" rx="1.5"/><path d="M7.5 10h9M7.5 14h6"/>'),
   menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
   note: svg('<path d="M9 17.5V5.5l10-2v12"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/>'),
-  noteOff: svg('<path d="M9 17.5V5.5l10-2v12"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/><path d="M3.5 3.5l17 17" stroke="var(--red)" stroke-width="2.2"/>'),
+  noteOff: svg('<path d="M9 17.5V5.5l10-2v12"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/><path d="M3.5 3.5l17 17" stroke="var(--stamp)" stroke-width="2.2"/>'),
   close: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
   tick: svg('<path d="m5 12.5 4.5 4.5L19 7.5"/>'),
 };

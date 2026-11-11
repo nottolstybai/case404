@@ -3,7 +3,7 @@
 import { clueParts, clueText, mainClueParts, mainClueText } from './text.js';
 import { ICONS, esc, partsHtml } from './ui-util.js';
 
-const num = (i) => String(i + 1).padStart(2, '0');
+const num = (i) => String(i + 1);
 
 // Главная улика. compact — строка над уликами в нижней панели телефона.
 export function mainClueHtml(f, compact = false) {

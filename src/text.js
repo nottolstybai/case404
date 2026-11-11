@@ -211,6 +211,8 @@ export const STORY = {
 export const rulesText = (puzzle) => THEMES[puzzle.theme].rules;
 export const introText = (puzzle) => THEMES[puzzle.theme].intros[puzzle.story.intro].text;
 export const themeTitle = (puzzle) => THEMES[puzzle.theme].title;
+// «Профессора больше нет.» — строка под номером дела в шапке.
+export const goneText = (puzzle) => THEMES[puzzle.theme].gone;
 
 export function mainClueText(puzzle) {
   const { k, v } = puzzle.culpritClue;
