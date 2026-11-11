@@ -171,7 +171,56 @@ function softNote(ctx, dest, { freq, t, dur, peak, cutoff = 1200 }) {
   release(osc, [filter, env]);
 }
 
+// ——— Записи: карандаш по бумаге (BigSoundBank №0221, CC0; нарезка — в sfx/CREDITS.md) ———
+// ✗ — два штриха, ✓ — один; по три варианта, чтобы не звучало как из пулемёта.
+// Пока записи не загрузились (или не загрузятся вовсе) — звучит синтез ниже.
+const SAMPLE_FILES = {
+  cross: ['pencil-x1', 'pencil-x2', 'pencil-x3'],
+  check: ['pencil-v1', 'pencil-v2', 'pencil-v3'],
+};
+const samples = {}; // имя звука → загруженные AudioBuffer
+
+// Подставить буферы (для тестов) — или загрузить файлы для живого контекста.
+export function setSamples(name, buffers) {
+  samples[name] = buffers;
+}
+function loadSamples(ctx) {
+  if (typeof fetch !== 'function') return;
+  for (const [name, files] of Object.entries(SAMPLE_FILES)) {
+    samples[name] = [];
+    for (const file of files) {
+      fetch(new URL(`../sfx/${file}.wav`, import.meta.url))
+        .then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error(res.status))))
+        // форма с колбэками — её понимает и старый Safari
+        .then((data) => new Promise((done, fail) => ctx.decodeAudioData(data, done, fail)))
+        .then((buffer) => samples[name].push(buffer))
+        .catch(() => {});
+    }
+  }
+}
+
+// Сыграть случайную запись; каждый раз чуть иная скорость — штрих не повторяется буквально.
+function playSample({ ctx, sfxBus }, name, t, gain = 1) {
+  const list = samples[name];
+  if (!list?.length) return false;
+  const src = ctx.createBufferSource();
+  src.buffer = list[Math.floor(Math.random() * list.length)];
+  const rate = 0.94 + Math.random() * 0.12;
+  src.playbackRate.value = rate;
+  const env = ctx.createGain();
+  env.gain.value = gain;
+  src.connect(env).connect(sfxBus);
+  src.start(t);
+  src.stop(t + src.buffer.duration / rate + 0.02);
+  release(src, [env]);
+  return true;
+}
+
 // ——— Общая схема: всё сходится в мастер и компрессор-ограничитель ———
+
+// Общая громкость относительно полной: музыка ≈ −3 дБ, звуки действий (и карандаш) ≈ −2,5 дБ.
+const MUSIC_LEVEL = 0.7;
+const SFX_LEVEL = 0.75;
 
 export function buildGraph(ctx, destination = ctx.destination) {
   const limiter = ctx.createDynamicsCompressor();
@@ -195,9 +244,13 @@ export function buildGraph(ctx, destination = ctx.destination) {
   musicBus.gain.value = 1;
   musicBus.connect(master);
   const sfxBus = ctx.createGain();
-  sfxBus.gain.value = 1;
+  sfxBus.gain.value = SFX_LEVEL;
   sfxBus.connect(master);
-  return { ctx, master, limiter, wet, musicBus, sfxBus };
+  // посыл звуков действий в реверберацию — с той же громкостью, что и сами звуки
+  const sfxWet = ctx.createGain();
+  sfxWet.gain.value = SFX_LEVEL;
+  sfxWet.connect(wet);
+  return { ctx, master, limiter, wet, musicBus, sfxBus, sfxWet };
 }
 
 // ——— Музыка ———
@@ -409,7 +462,7 @@ export function createMusic(graph, rand = Math.random) {
     for (const g of [dry, wetSend]) {
       g.gain.cancelScheduledValues(at);
       g.gain.setValueAtTime(g.gain.value, at);
-      g.gain.linearRampToValueAtTime(to, at + seconds);
+      g.gain.linearRampToValueAtTime(to * MUSIC_LEVEL, at + seconds); // сухой путь и реверберация музыки
     }
   }
 
@@ -434,13 +487,17 @@ export function createMusic(graph, rand = Math.random) {
 
 // Каждый звук: (graph, t) → планирует себя на момент t. Уровни подобраны по замерам офлайн-рендера.
 const SFX = {
-  // чирк карандашом: два коротких шумовых штриха
-  cross({ ctx, sfxBus }, t) {
+  // ✗ карандашом: запись двух штрихов, иначе — два коротких шумовых штриха
+  cross(graph, t) {
+    if (playSample(graph, 'cross', t)) return;
+    const { ctx, sfxBus } = graph;
     noiseBurst(ctx, sfxBus, { t, dur: 0.05, peak: 0.34, freq: 3200, freqEnd: 2200, q: 1.4 });
     noiseBurst(ctx, sfxBus, { t: t + 0.035, dur: 0.045, peak: 0.2, freq: 2600, freqEnd: 1700, q: 1.4 });
   },
-  // «тук» по дереву в два касания: светлый щелчок и тон пониже
-  check({ ctx, sfxBus }, t) {
+  // ✓ карандашом: запись одного штриха, иначе — «тук» в два касания
+  check(graph, t) {
+    if (playSample(graph, 'check', t)) return;
+    const { ctx, sfxBus } = graph;
     thump(ctx, sfxBus, { t, from: 1500, to: 1100, dur: 0.03, peak: 0.09, type: 'sine', cutoff: 4000 });
     thump(ctx, sfxBus, { t: t + 0.055, from: 820, to: 560, dur: 0.09, peak: 0.2, type: 'triangle', cutoff: 2200 });
   },
@@ -515,7 +572,7 @@ export const SFX_NAMES = Object.keys(SFX);
 
 export function playSfx(graph, name, t = graph.ctx.currentTime) {
   if (!SFX_NAMES.includes(name)) return false;
-  SFX[name](graph, t);
+  SFX[name]({ ...graph, wet: graph.sfxWet }, t);
   return true;
 }
 
@@ -580,6 +637,7 @@ function unlock() {
       if (globalThis.navigator?.audioSession) navigator.audioSession.type = 'playback';
       ctx = new Ctor();
       graph = buildGraph(ctx);
+      loadSamples(ctx);
       ctx.onstatechange = () => notify();
       // старому iOS нужен хотя бы один проигранный буфер внутри жеста
       const blank = ctx.createBufferSource();

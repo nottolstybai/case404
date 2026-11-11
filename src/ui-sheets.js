@@ -2,7 +2,7 @@
 // На телефоне — снизу, на компьютере — по центру. Разметка; поведение — в main.js.
 
 import { accuseCategories } from './game.js';
-import { confessionText, introText, mainClueParts, rulesText, themeTitle, valueName } from './text.js';
+import { confessionText, introText, mainClueParts, rulesText, valueName } from './text.js';
 import { STAMP, portrait, scene } from './art.js';
 import { clock, plural, solvedCount, streak, untilMidnight } from './stats.js';
 import { ICONS, cap, esc, partsHtml } from './ui-util.js';
@@ -18,7 +18,6 @@ function brief(S) {
   const series = S.isToday ? streak(S.stats, puzzle.number) : 0;
   return `
     ${bannerHtml(puzzle)}
-    <p class="place-tag">${esc(themeTitle(puzzle))}</p>
     <h2 class="sheet-title" id="sheet-title">${esc(S.title)}</h2>
     <p class="brief-date">${esc(S.subtitle)}</p>
     <p class="intro">${esc(introText(puzzle))}</p>
@@ -67,7 +66,7 @@ function help(S) {
     ${toggle('easy', settings.easy, 'Упрощённый режим: последний оставшийся вариант отмечается сам')}
     ${toggle('music', settings.music, 'Музыка')}
     ${toggle('sfx', settings.sfx, 'Звуки действий')}
-    <p class="credits">Музыка и звуки синтезируются в браузере.</p>
+    <p class="credits">Музыка и звуки синтезируются в браузере. Карандаш — запись Joseph Sardin, BigSoundBank (CC0).</p>
     <div class="actions"><button class="btn primary" data-act="close-sheet" data-autofocus>Понятно</button></div>`;
 }
 
@@ -86,9 +85,9 @@ function caseRow(S, item) {
   const [cls, text] = caseStatus(S, item.key, item.number);
   const here = item.key === S.key;
   return `<li><a class="case-row${here ? ' here' : ''}" href="${item.href}"${here ? ' aria-current="page"' : ''}>
-    <span class="cn">${item.today ? 'Сегодня · ' : ''}Дело №${item.number}</span>
-    <span class="cd">${esc(item.date)}</span>
-    <span class="cs st-${cls}">${here ? 'открыто · ' : ''}${text}</span>
+    <span class="cn">Дело №${item.number}</span>
+    <span class="cd">${item.today ? 'Сегодня, ' : ''}${esc(item.date)}</span>
+    <span class="cs st-${cls}">${text}${here ? '<small>открыто сейчас</small>' : ''}</span>
   </a></li>`;
 }
 
@@ -161,15 +160,17 @@ function chronicle(puzzle, orderK) {
     .sort((a, b) => a.slot - b.slot)
     .map(({ p, g, slot }, i) => {
       const values = puzzle.categories.map((_, k) => valueName(puzzle, k, puzzle.solution[g][k]));
+      // «Купе, кочерга»: место и вещь через запятую, с большой буквы только первое слово
       const rest = puzzle.categories
-        .map((cat, k) => (k === orderK ? '' : `<span class="ch-${cat.key}">${esc(cap(values[k]))}</span>`))
-        .filter(Boolean)
-        .join('<span class="sep">·</span>');
+        .map((cat, k) => ({ cat, k }))
+        .filter(({ k }) => k !== orderK)
+        .map(({ cat, k }, j) => `<span class="ch-${cat.key}">${esc(j ? values[k] : cap(values[k]))}</span>`)
+        .join(', ');
       const culprit = g === puzzle.culprit;
       return `<li class="${culprit ? 'culprit' : ''}" style="--i:${i}">
         <span class="ch-time">${values[orderK]}</span>
         <span class="mini" data-static="${esc(p.role)}">${portrait(p.role)}</span>
-        <span class="ch-who"><b>${esc(p.name)}</b><span class="ch-role">${esc(p.role)}${culprit ? ' · преступник' : ''}</span></span>
+        <span class="ch-who"><b>${esc(p.name)}</b><span class="ch-role">${esc(p.role)}${culprit ? ', преступник' : ''}</span></span>
         <span class="ch-rest">${rest}</span>
       </li>`;
     })
@@ -192,12 +193,12 @@ function result(S) {
     : '';
   const total = solvedCount(S.stats);
   const series = streak(S.stats, puzzle.number);
-  const record = S.isToday
-    ? `<div class="record">
-        <div><b>${series}</b><span>${plural(series, 'день', 'дня', 'дней')} подряд</span></div>
-        <div><b>${total}</b><span>${plural(total, 'дело', 'дела', 'дел')} раскрыто</span></div>
-        <div><b id="countdown">${untilMidnight()}</b><span>до нового дела</span></div>
-      </div>`
+  // Итог — строки бланка: напечатанная подпись и вписанное значение.
+  const field = (label, value) => `<div><dt>${label}</dt><dd>${value}</dd></div>`;
+  const today = S.isToday
+    ? field('Серия', `${days(series)} подряд`) +
+      field('Раскрыто всего', `${total} ${plural(total, 'дело', 'дела', 'дел')}`) +
+      field('Новое дело', `через <span id="countdown">${untilMidnight()}</span>`)
     : '';
   return `
     <h2 class="visually-hidden" id="sheet-title">${game.solved ? 'Дело раскрыто' : 'Дело не раскрыто'}</h2>
@@ -211,18 +212,18 @@ function result(S) {
     </div>
     ${chronicle(puzzle, S.orderK)}
     ${story}
-    <div class="stats">
-      <span>Время ${clock(game.elapsed)}</span>
-      <span>Неверных обвинений: ${game.wrong}</span>
-      <span>Подсказок: ${game.hints}</span>
-    </div>
-    ${record}
+    <dl class="fields">
+      ${field('Время расследования', clock(game.elapsed))}
+      ${field('Неверных обвинений', game.wrong)}
+      ${field('Подсказок', game.hints)}
+      ${today}
+    </dl>
     <div class="actions">
       <button class="btn primary" data-act="share" data-autofocus>Поделиться</button>
       <button class="btn" data-act="random-case">Случайное дело</button>
     </div>
     <p class="share-note" aria-live="polite">${esc(S.shareNote)}</p>
-    <button class="link" data-act="close-sheet">К делу — посмотреть доску</button>`;
+    <button class="link" data-act="close-sheet">Посмотреть доску</button>`;
 }
 
 const SHEETS = { brief, help, menu, accuse, giveup, result };

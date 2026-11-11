@@ -28,8 +28,9 @@ import {
   view,
 } from './game.js';
 import { clueRefs, context, onlyValue, ref, settled } from './logic.js';
-import { introText, themeTitle } from './text.js';
-import { clock, record, shareText, streak, untilMidnight } from './stats.js';
+import { goneText, introText, themeTitle } from './text.js';
+import { scene } from './art.js';
+import { clock, plural, record, shareText, streak, untilMidnight } from './stats.js';
 import { morph } from './morph.js';
 import { boardHtml } from './ui-board.js';
 import { cluePanelHtml, clueListHtml, hintHtml, mainClueHtml } from './ui-clues.js';
@@ -51,7 +52,7 @@ const id = caseId(puzzle);
 // серия считается только для сегодняшнего дела дня
 const isToday = !puzzle.random && key === dateKey();
 const title = caseTitle(puzzle);
-const subtitle = `${themeTitle(puzzle)} · ${puzzle.random ? 'случайное дело' : dateLabel(key)}`;
+const subtitle = `${themeTitle(puzzle)}, ${puzzle.random ? 'случайное дело' : dateLabel(key)}`;
 document.title = title;
 
 const saveKey = (k) => `case404:v2:${k}`;
@@ -201,13 +202,17 @@ function frame(base = derive()) {
 
 const soundOn = () => settings.music || settings.sfx;
 
+// Ночь в шапке: картинка места дела, кадр по верху — небо, звёзды и луна целиком.
+const night = `<span class="top-night" aria-hidden="true" data-static="night">${scene(puzzle.theme, puzzle.story.art).replace('xMidYMax slice', 'xMidYMin slice')}</span>`;
+
 function headerHtml(f) {
   const playing = audio?.isMusicPlaying?.() ?? false;
   return `
     <header class="top">
+      ${night}
       <button class="case-btn" data-act="brief" aria-label="${esc(title)}: открыть дело">
         <span class="case-no">${esc(title)}</span>
-        <span class="case-sub">${esc(subtitle)}</span>
+        <span class="case-sub">${esc(goneText(puzzle))}</span>
       </button>
       <span class="timer${f.over ? ' stopped' : ''}" id="timer" aria-label="Время расследования" role="timer">${clock(game.elapsed)}</span>
       <button class="icon-btn${playing ? ' playing' : ''}" data-act="sound" aria-pressed="${soundOn()}" aria-label="${soundOn() ? 'Выключить звук' : 'Включить звук'}">${soundOn() ? ICONS.note : ICONS.noteOff}</button>
@@ -244,15 +249,21 @@ function phoneHtml(f) {
     </div>`;
 }
 
+// «Осталось 7 улик из 10» над списком на компьютере.
+function cluesLeft(f) {
+  const left = f.remaining;
+  if (!left) return 'Все улики отработаны';
+  return `${plural(left, 'Осталась', 'Осталось', 'Осталось')} ${left} ${plural(left, 'улика', 'улики', 'улик')} из ${f.clues.length}`;
+}
+
 function wideHtml(f) {
   return `
     <div class="layout wide" data-key="wide">
       <section class="file">
         ${bannerHtml(puzzle)}
-        <p class="place-tag">${esc(themeTitle(puzzle))}</p>
         <p class="intro">${esc(introText(puzzle))}</p>
         ${mainClueHtml(f)}
-        <h2 class="sec">Улики · ${f.clues.length} · осталось ${f.remaining}</h2>
+        <h2 class="sec">${cluesLeft(f)}</h2>
         <div class="clues mode-list">${clueListHtml(f)}</div>
       </section>
       <section class="desk">
@@ -365,13 +376,39 @@ function watchDock() {
 
 let before = derive();
 
+// Свет лампы гаснет по той же кривой: тьма по краям сгущается, пока дело открыто;
+// дело закрыто — свет возвращается. --dark от 0 до 1 читает style.css.
+function lamp(base = before) {
+  const dark = isOver(game) ? 0 : base.complete ? 1 : 0.85 * base.progress;
+  document.documentElement.style.setProperty('--dark', dark.toFixed(3));
+}
+
 // Музыка напрягается по мере того, как доска заполняется; колонка преступника собрана — на максимум.
 function tension(base = before) {
+  lamp(base);
   try {
     audio?.setTension(base.complete ? 1 : base.progress);
   } catch {
     // звук не главное
   }
+}
+
+// Изредка лампа мигает: два коротких провала света, беззвучно. Ближе к развязке — чаще.
+// Не мигает, пока открыт лист, дело не начато или закрыто, вкладка скрыта
+// или в системе выключена анимация. Два провала за секунду — ниже порога опасных вспышек.
+const flickerEl = Object.assign(document.createElement('div'), { className: 'flicker' });
+flickerEl.setAttribute('aria-hidden', 'true');
+document.body.append(flickerEl);
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+function scheduleFlicker() {
+  const dark = isOver(game) ? 0 : before.complete ? 1 : before.progress;
+  const wait = (40 + Math.random() * 50) * (1 - 0.5 * dark); // 40–90 с в начале, 20–45 с у развязки
+  setTimeout(() => {
+    if (!calm.matches && !ui.sheet && game.started && !isOver(game) && !document.hidden) {
+      replay(flickerEl, 'on', 1000);
+    }
+    scheduleFlicker();
+  }, wait * 1000);
 }
 
 // После хода: звуки «улика сошлась» и «колонка закрылась», сохранение, отрисовка.
@@ -570,6 +607,7 @@ function finish(sound) {
   save();
   ui.sheet = 'result';
   render();
+  lamp();
   setTimeout(() => sfx(sound), 250); // под удар печати
 }
 
@@ -918,4 +956,5 @@ wideQuery.addEventListener('change', () => render());
 document.documentElement.classList.add('boot');
 render();
 tension();
+scheduleFlicker();
 requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.remove('boot')));

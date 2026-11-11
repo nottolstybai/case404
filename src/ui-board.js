@@ -72,7 +72,7 @@ export function boardHtml(f) {
     .map((group, g) => {
       const rows = Array.from({ length: ctx.n }, (_, v) => row(f, g * ctx.n + v)).join('');
       const done = f.groupDone[g];
-      return `<div class="gtitle g-${group.key}" role="row"><span role="rowheader">${GROUP_TITLES[group.key]}</span><span class="gcount">${done}/${ctx.n}</span></div>${rows}`;
+      return `<div class="gtitle g-${group.key}" role="row"><span role="rowheader">${GROUP_TITLES[group.key]}</span><span class="gcount">${done} из ${ctx.n}</span></div>${rows}`;
     })
     .join('');
   const pct = Math.round(f.progress * 100);

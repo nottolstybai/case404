@@ -52,6 +52,7 @@ function fakeContext(sampleRate = 4000) {
     return node({
       frequency: param(440),
       detune: param(),
+      playbackRate: param(1),
       start(t = 0) {
         rec.start = t;
       },
@@ -102,6 +103,18 @@ test('каждый звук действия что-то запускает и �
       assert.ok(s.start >= 1, name);
       assert.ok(s.stop > s.start && s.stop < 1 + 8, `${name}: источник должен остановиться за несколько секунд`);
     }
+  }
+});
+
+test('карандаш: если записи загружены, ✗ и ✓ играют запись и сами останавливаются', () => {
+  for (const name of ['cross', 'check']) {
+    const { ctx, sources } = fakeContext();
+    audio.setSamples(name, [ctx.createBuffer(1, 1000, 4000)]);
+    assert.equal(audio.playSfx(audio.buildGraph(ctx), name, 1), true);
+    const played = sources.filter((s) => s.start !== null);
+    assert.equal(played.length, 1, `${name}: одна запись, без синтеза`);
+    assert.ok(played[0].stop > 1 && played[0].stop < 1.4, name);
+    audio.setSamples(name, []); // остальные тесты — на синтезе
   }
 });
 

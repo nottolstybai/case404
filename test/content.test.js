@@ -30,6 +30,13 @@ test('места и предметы каждой темы помещаются 
   }
 });
 
+test('у каждой темы есть короткая строка для шапки', () => {
+  for (const [key, theme] of Object.entries(THEMES)) {
+    // в шапке телефона помещается около 26 знаков
+    assert.ok(theme.gone && theme.gone.length <= 26, key);
+  }
+});
+
 test('у каждой темы есть вступления и главные улики для всех категорий', () => {
   for (const [key, theme] of Object.entries(THEMES)) {
     assert.ok(theme.intros.length >= 6, key);
