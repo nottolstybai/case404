@@ -28,7 +28,8 @@ function brief(S) {
     ${mainBox(puzzle)}
     <p class="rules">${esc(rulesText(puzzle))}</p>
     ${series ? `<p class="streak">Серия: <b>${days(series)}</b> подряд — не прерви её.</p>` : ''}
-    <div class="actions"><button class="btn primary" data-act="start"${af(S)}>${game.started ? 'К доске' : 'Начать расследование'}</button></div>`;
+    <div class="actions"><button class="btn primary" data-act="start"${af(S)}>${game.started ? 'К доске' : 'Начать расследование'}</button></div>
+    <a class="link" href="proto3d.html">Новый режим: «Показания» в 3D</a>`;
 }
 
 const toggle = (name, on, text) => `
@@ -106,6 +107,9 @@ function menu(S) {
     ${random}
     <button class="btn wide-btn" data-act="random-case">Случайное дело</button>
     <p class="note">Случайные и прошлые дела можно решать сколько угодно — на серию влияет только дело дня.</p>
+    <h3 class="sec">Новый режим</h3>
+    <a class="btn wide-btn" href="proto3d.html">«Показания» в 3D</a>
+    <p class="note">Прототип: преступник лжёт в каждой фразе, остальные говорят правду. Найди лжеца — дело открывается за столом детектива.</p>
     ${past.length ? `<h3 class="sec">Архив</h3><ul class="cases">${past.map((item) => caseRow(S, item)).join('')}</ul>` : ''}
     <div class="actions"><button class="btn" data-act="close-sheet"${af(S)}>Закрыть</button></div>`;
 }

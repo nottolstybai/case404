@@ -691,6 +691,9 @@ svg.ico { width: 20px; height: 20px; display: block; flex: none; }
 .actions { display: flex; gap: 8px; margin-top: 18px; }
 .actions .btn { flex: 1; }
 .btn.wide-btn { display: block; width: 100%; margin: 12px 0 0; }
+/* ссылка в виде кнопки (например, «Показания» в 3D) — текст по центру, без подчёркивания */
+a.btn, a.btn.wide-btn { display: grid; place-items: center; text-align: center; text-decoration: none; }
+a.link { text-align: center; }
 .link {
   display: block;
   margin: 16px auto 0;
