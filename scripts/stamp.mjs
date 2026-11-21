@@ -3,18 +3,21 @@
 // новый index.html и старые скрипты из кэша — и игра сломается.
 // Запуск из корня проекта: npm run stamp
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 const hash = (path) => createHash('sha1').update(readFileSync(path)).digest('hex').slice(0, 8);
 const versioned = (path) => `${path}?v=${hash(path)}`;
 
 const modules = readdirSync('src').filter((f) => f.endsWith('.js')).sort();
 const imports = Object.fromEntries(modules.map((f) => [`./src/${f}`, `./${versioned(`src/${f}`)}`]));
+// облегчённый Three.js для 3D-кабинета (scripts/vendor-three.mjs)
+if (existsSync('vendor/three.js')) imports.three = `./${versioned('vendor/three.js')}`;
 
 // Страница: свои стили и свой вход; карта модулей у всех общая.
 const PAGES = [
   { html: 'index.html', styles: ['style.css'], entry: 'src/main.js' },
   { html: 'proto.html', styles: ['style.css', 'proto.css'], entry: 'src/proto.js' },
+  { html: 'proto3d.html', styles: ['style.css', 'proto.css'], entry: 'src/proto.js' },
 ];
 
 for (const page of PAGES) {

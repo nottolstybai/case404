@@ -12,6 +12,7 @@ import { AUTO_CHECK, CHECK, CROSS, checkpoint, clueState, giveUp, isCheck, isOve
 import { clueRefs, context, onlyValue, settled } from './logic.js';
 import { clueParts, clueText, confessionText, goneText, introText, themeTitle, valueName } from './text.js';
 import { portrait, scene } from './art.js';
+import { count } from './stats.js';
 import { morph } from './morph.js';
 import { boardHtml } from './ui-board.js';
 import { bannerHtml, chronicle, sheetHtml } from './ui-sheets.js';
@@ -57,6 +58,9 @@ const title = caseTitle(puzzle);
 const subtitle = `${themeTitle(puzzle)}, ${puzzle.random ? 'случайное дело' : dateLabel(key)}`;
 document.title = `${title} — показания`;
 const { suspects, statements, evidence } = puzzle;
+// proto3d.html: вокруг дела — 3D-кабинет детектива (office3d.js); proto.html — без него
+const with3d = document.body.dataset.scene === '3d';
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
 // Номер фразы в puzzle.clues: сначала показания (по две на человека), потом протокол.
 const sayIndex = (g, i) => statements.slice(0, g).reduce((sum, st) => sum + st.length, 0) + i;
 const factIndex = (j) => statements.flat().length + j;
@@ -168,6 +172,9 @@ function frame() {
 
 const night = `<span class="top-night" aria-hidden="true" data-static="night">${scene(puzzle.theme, puzzle.story.art).replace('xMidYMax slice', 'xMidYMin slice')}</span>`;
 
+// Настольная лампа: кнопка «за стол» — в кабинет и обратно.
+const LAMP = `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.5h12l-2.2-5H5.7z"/><path d="M9.5 10.5V19"/><path d="M5 20h9"/><path d="M14 10.5v3.2"/><path d="M18 9.5l2.5 1M18.3 6.3l2.2-1.3"/></svg>`;
+
 const headerHtml = () => `
   <header class="top">
     ${night}
@@ -175,8 +182,13 @@ const headerHtml = () => `
       <span class="case-no">${esc(title)}<span class="proto-tag">показания</span></span>
       <span class="case-sub">${esc(goneText(puzzle))}</span>
     </button>
+    ${desk.on ? `<button class="icon-btn desk-btn" data-act="to-desk" aria-label="За стол: кабинет детектива" aria-pressed="false">${LAMP}</button>` : ''}
     <button class="icon-btn q" data-act="brief" aria-label="Как играть">?</button>
   </header>`;
+
+// Штамп на протоколе, когда дело закрыто, — в 3D его ставит рука, в 2D он остаётся на листе.
+const paperStamp = (f) =>
+  desk.on && f.over ? `<div class="paper-stamp${game.solved ? '' : ' lost'}${desk.stamping ? ' pending' : ''}" data-key="paper-stamp" aria-hidden="true">${game.solved ? 'Раскрыто' : 'Не раскрыто'}</div>` : '';
 
 // Фраза: обычная — как сказана; у подозреваемого — зачёркнута, под ней — что из неё следует.
 function sayHtml(g, i, f) {
@@ -258,7 +270,7 @@ function toolbarHtml(f) {
 
 function phoneHtml(f) {
   return `
-    <div class="layout phone" data-key="phone"><section class="board-wrap">${boardHtml(f)}</section></div>
+    <div class="layout phone" data-key="phone"><section class="board-wrap">${boardHtml(f)}${paperStamp(f)}</section></div>
     <div class="dock" data-key="dock">
       <div class="clues mode-list">
         ${versionHtml()}
@@ -280,6 +292,7 @@ function wideHtml(f) {
         ${boardHtml(f)}
         ${toolbarHtml(f)}
         <p class="desk-tip">Тап по фразе подсвечивает на доске, о чём она. Тап по клетке — ✗, ещё тап — ✓, правая кнопка — сразу ✓.</p>
+        ${paperStamp(f)}
       </section>
     </div>`;
 }
@@ -362,7 +375,7 @@ function explainHtml() {
   );
   const rivals = puzzle.rivals.map(
     (r) =>
-      `<li>Если бы лгал${she(r, '', 'а')} ${esc(suspects[r].name)}, ${she(r, 'его', 'её')} фразы наоборот вместе с остальными пришли бы к противоречию — за ${tryVersion(puzzle, r).steps} шагов.</li>`,
+      `<li>Если бы лгал${she(r, '', 'а')} ${esc(suspects[r].name)}, ${she(r, 'его', 'её')} фразы наоборот вместе с остальными пришли бы к противоречию — за ${count(tryVersion(puzzle, r).steps, 'шаг', 'шага', 'шагов')}.</li>`,
   );
   const lies = statements[c].map((said) => `<li>${esc(suspects[c].name)} солгал${she(c, '', 'а')}: «${esc(bare(said))}». На самом деле: «${esc(bare(negate(said)))}».</li>`);
   return `<h3 class="sec">Разбор</h3><ol class="howto explain">${[...sets, ...rivals, ...lies].join('')}</ol>`;
@@ -397,6 +410,225 @@ function resultSheet(S) {
 
 const SHEETS = { brief, accuse: accuseSheet, giveup: giveupSheet, result: resultSheet };
 
+/* ---------- 3D-кабинет (proto3d.html) ---------- */
+
+// Кабинет — слой поверх игры, вне #app (morph его не трогает). mode: 'desk' — сидим за столом (3D),
+// 'case' — над бумагами (2D). busy — идёт переход: листы не открываем, нажатие или клавиша — «пропустить».
+// Нет WebGL или 3D не загрузилось — кабинет убираем, играем в 2D.
+// stamping — рука ещё не поставила штамп: в 2D его пока не видно.
+const desk = { on: with3d, mode: with3d ? 'desk' : 'case', busy: with3d, stamping: false, office: null, paint: null };
+const FADE = 450; // как .office { transition } в proto.css
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, calm.matches ? 0 : ms));
+const deskEl = with3d ? document.createElement('div') : null;
+if (deskEl) {
+  deskEl.className = 'office';
+  deskEl.innerHTML = `
+    <div class="office-stage"></div>
+    <p class="office-loading">Дело открывается…</p>
+    <button class="icon-btn office-back" type="button" aria-label="К делу: вернуться к бумагам" aria-pressed="true" hidden>${LAMP}</button>
+    <p class="office-hint" hidden></p>`;
+  document.body.append(deskEl);
+  deskEl.addEventListener('click', (event) => {
+    if (desk.busy) return desk.office?.hurry();
+    if (event.target.closest('.office-back') || desk.office?.isPaper(event)) enterCase();
+  });
+  // за столом страница под кабинетом не прокручивается: иначе листы в 2D уедут от листов на столе
+  for (const type of ['wheel', 'touchmove']) deskEl.addEventListener(type, (event) => event.preventDefault(), { passive: false });
+}
+
+function hud(idle, hint = '') {
+  deskEl.querySelector('.office-back').hidden = !idle;
+  const tip = deskEl.querySelector('.office-hint');
+  tip.textContent = hint;
+  tip.hidden = !hint;
+}
+// Кнопка «к делу» за столом — ровно там, где «за стол» в шапке: одна и та же кнопка туда и обратно.
+function alignBack() {
+  const back = deskEl.querySelector('.office-back');
+  const twin = app.querySelector('[data-act="to-desk"]')?.getBoundingClientRect();
+  if (twin?.width && twin.top >= 0) Object.assign(back.style, { left: `${twin.left}px`, top: `${twin.top}px`, right: 'auto' });
+  else back.removeAttribute('style');
+}
+
+// Положить на 3D-стол те же листы, что сейчас на экране. На телефоне показаний на экране нет —
+// на стол кладём их машинописную копию. Возвращает протокол (с меркой штампа).
+async function layDesk({ skipStamp = false } = {}) {
+  const { paintSheet } = desk.paint;
+  const scale = Math.min(3, Math.max(1.5, devicePixelRatio));
+  const skip = skipStamp ? '.paper-stamp' : null;
+  const screen = { width: deskEl.clientWidth, height: deskEl.clientHeight };
+  if (wide()) {
+    const [protocol, statementsSheet] = await Promise.all([
+      paintSheet(app.querySelector('.layout.wide .desk'), { scale, skip }),
+      paintSheet(app.querySelector('.layout.wide .file'), { scale }),
+    ]);
+    desk.office.layout({ protocol, statements: statementsSheet }, screen);
+    return protocol;
+  }
+  const protocol = await paintSheet(app.querySelector('.layout.phone .board-wrap'), { scale, skip });
+  desk.office.layout({ protocol, statements: typedStatements(protocol.width) }, screen);
+  return protocol;
+}
+
+function typedStatements(width) {
+  const W = 1000;
+  const H = 1414;
+  const canvas = Object.assign(document.createElement('canvas'), { width: W, height: H });
+  const ctx2 = canvas.getContext('2d');
+  desk.paint.paperFill(ctx2, W, H, '#e4e4dc', 7);
+  ctx2.fillStyle = '#55578a';
+  ctx2.font = '700 34px "PT Sans Narrow", sans-serif';
+  ctx2.fillText('ПОКАЗАНИЯ', 70, 100);
+  let y = 170;
+  const wrap = (text, max) => {
+    const lines = [];
+    let line = '';
+    for (const word of text.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (ctx2.measureText(next).width > max && line) {
+        lines.push(line);
+        line = word;
+      } else line = next;
+    }
+    return line ? [...lines, line] : lines;
+  };
+  suspects.forEach((person, g) => {
+    ctx2.fillStyle = '#25221e';
+    ctx2.font = '700 30px "PT Serif", serif';
+    ctx2.fillText(`${person.name}, ${person.role}`, 70, y);
+    y += 42;
+    ctx2.font = '400 27px "PT Serif", serif';
+    ctx2.fillStyle = '#3a3631';
+    for (const c of statements[g]) {
+      for (const line of wrap(`— ${clueText(puzzle, c)}`, W - 170)) {
+        ctx2.fillText(line, 96, y);
+        y += 36;
+      }
+    }
+    y += 24;
+  });
+  return { canvas, x: 0, y: 0, width, height: width * (H / W), angle: 0, onScreen: false };
+}
+
+// Открыли дело: кабинет, садимся за стол, наклоняемся к бумагам — и дальше 2D.
+async function openOffice() {
+  try {
+    const [mod, paint] = await Promise.all([import('./office3d.js'), import('./paint.js')]);
+    desk.paint = paint;
+    desk.office = mod.createOffice(deskEl.querySelector('.office-stage'), { title, reducedMotion: calm.matches });
+    await Promise.race([document.fonts.ready, wait(2500)]);
+    await layDesk();
+  } catch {
+    desk.office?.destroy();
+    desk.office = null;
+    desk.on = false;
+    desk.mode = 'case';
+    desk.busy = false;
+    deskEl.remove();
+    render();
+    return;
+  }
+  desk.office.place('stand');
+  deskEl.classList.add('lit');
+  hud(false, 'Нажми, чтобы пропустить');
+  await desk.office.pause(700);
+  await desk.office.sit(1900);
+  await desk.office.pause(450);
+  await enterCase();
+}
+
+// Из-за стола — к бумагам: камера опускается к листам, кабинет растворяется в 2D.
+async function enterCase() {
+  if (desk.mode !== 'desk' || !desk.office) return;
+  desk.busy = true;
+  hud(false);
+  render();
+  await layDesk(); // в 2D могло что-то поменяться — на столе те же листы, что на экране
+  await desk.office.lean(1300);
+  desk.mode = 'case';
+  deskEl.classList.add('gone');
+  render();
+  await wait(FADE);
+  desk.office.setActive(false);
+  desk.office.hurry(false);
+  desk.busy = false;
+  render(); // теперь можно открыть лист (правила — в начале дела)
+  if (lastInput === 'key') app.querySelector('[data-act="to-desk"]')?.focus();
+}
+
+// За стол: 2D растворяется в кабинете (вид сверху совпадает с экраном), камера поднимается — сидим.
+async function enterDesk() {
+  if (desk.mode !== 'case' || desk.busy || !desk.office) return;
+  desk.busy = true;
+  desk.mode = 'desk';
+  alignBack();
+  await layDesk();
+  desk.office.place('top');
+  desk.office.setActive(true);
+  deskEl.classList.remove('gone');
+  render();
+  await wait(FADE);
+  await desk.office.sit(1500);
+  deskIdle();
+}
+
+function deskIdle() {
+  desk.busy = false;
+  desk.office.hurry(false);
+  hud(true, 'Нажми на бумаги — к делу');
+  render();
+  if (lastInput === 'key' && !ui.sheet) deskEl.querySelector('.office-back').focus();
+  if (!ui.sheet) announce('Кабинет. Кнопка с лампой или нажатие на бумаги — обратно к делу.');
+}
+
+// Дело закрыто: снова кабинет, рука ставит штамп на протокол, потом — итог прямо за столом.
+async function stampCase(sound) {
+  desk.busy = true;
+  desk.stamping = true;
+  ui.sheet = null;
+  render(); // лист обвинения закрылся, на протоколе в 2D уже есть штамп — его на столе пока нет
+  desk.mode = 'desk';
+  alignBack();
+  const protocol = await layDesk({ skipStamp: true });
+  desk.office.place('top');
+  desk.office.setActive(true);
+  deskEl.classList.remove('gone');
+  render();
+  await wait(FADE);
+  const mark = protocol.stamps[0];
+  if (mark) await desk.office.stamp(mark, protocol, () => sfx(sound));
+  else sfx(sound);
+  desk.stamping = false;
+  ui.sheet = 'result';
+  deskIdle();
+}
+
+// Клавиши за столом: во время перехода — «пропустить», Esc — к делу; страница под кабинетом не листается.
+const SCROLL_KEYS = new Set([' ', 'PageDown', 'PageUp', 'Home', 'End', 'ArrowDown', 'ArrowUp']);
+function deskKey(event) {
+  if (desk.busy) {
+    if (['Escape', 'Enter', ' '].includes(event.key)) {
+      event.preventDefault();
+      desk.office?.hurry();
+    }
+    return;
+  }
+  if (ui.sheet) return; // итог открыт за столом — Esc и Tab забота браузера
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    enterCase();
+  } else if (SCROLL_KEYS.has(event.key) && !event.target.closest?.('button')) event.preventDefault();
+}
+
+// Окно поменяло размер, пока сидим за столом, — листы на столе раскладываем заново, как на экране.
+let relayTimer = 0;
+addEventListener('resize', () => {
+  clearTimeout(relayTimer);
+  relayTimer = setTimeout(() => {
+    if (desk.mode === 'desk' && !desk.busy && desk.office) layDesk().then(() => desk.office.place('seat'));
+  }, 200);
+});
+
 /* ---------- отрисовка ---------- */
 
 let lastSheet = null;
@@ -406,6 +638,8 @@ addEventListener('pointerdown', () => (lastInput = 'pointer'), true);
 
 function render() {
   const f = frame();
+  // за столом игра под кабинетом недоступна — кроме листа итога, открытого прямо за столом
+  app.inert = desk.mode === 'desk' && !(ui.sheet && !desk.busy);
   // лист закрываем до того, как morph уберёт его содержимое: браузер вернёт фокус туда, откуда лист открыли
   const dialog = app.querySelector('dialog.sheet');
   if (!ui.sheet && dialog?.open) dialog.close();
@@ -417,6 +651,7 @@ function render() {
 
 // Как в main.js: открыть модальное окно или, если сменился лист, — наверх и фокус заново.
 function syncSheet() {
+  if (desk.busy) return; // идёт переход в кабинет или из него — лист откроем после
   const dialog = app.querySelector('dialog.sheet');
   const opened = Boolean(ui.sheet) && !dialog.open;
   if (opened) dialog.showModal();
@@ -557,6 +792,8 @@ function finish(sound) {
   ui.active = null;
   game.draft = null;
   save();
+  // в 3D — сперва штамп на протокол, потом итог
+  if (desk.office && desk.mode === 'case' && !desk.busy) return stampCase(sound);
   ui.sheet = 'result';
   render();
   setTimeout(() => sfx(sound), 250);
@@ -633,7 +870,12 @@ const actions = {
   },
   brief: () => openSheet('brief'),
   start: closeSheet,
-  'close-sheet': closeSheet,
+  'close-sheet'() {
+    closeSheet();
+    // итог открыт за столом: «Посмотреть доску» — наклониться к бумагам
+    if (desk.mode === 'desk') enterCase();
+  },
+  'to-desk': () => enterDesk(),
 };
 
 /* ---------- касания, мышь, клавиатура ---------- */
@@ -723,6 +965,10 @@ if (!('closedBy' in HTMLDialogElement.prototype)) {
 
 const ARROWS = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
 document.addEventListener('keydown', (event) => {
+  if (desk.mode === 'desk' || desk.busy) {
+    deskKey(event);
+    return;
+  }
   if (ui.sheet) return; // в листе Esc и Tab — забота браузера
   if (event.key === 'Escape' && ui.active !== null) {
     ui.active = null;
@@ -763,4 +1009,5 @@ wideQuery.addEventListener('change', () => render());
 // Первая отрисовка — без анимаций.
 document.documentElement.classList.add('boot');
 render();
+if (desk.on) openOffice();
 requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.remove('boot')));
