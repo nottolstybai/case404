@@ -57,11 +57,15 @@ function clause(puzzle, s, w) {
 
 const PRONOUN = { nom: 'тот', gen: 'того', ins: 'тем' };
 
+const ME = { nom: 'я', gen: 'меня', ins: 'мной' };
+
 // Субъект в падеже: имя или «тот, кто …». open — придаточное, после него нужна запятая.
-function subject(puzzle, s, form, w) {
+// speaker — кто говорит (показания): про себя он говорит «я», «меня», «мной».
+function subject(puzzle, s, form, w, speaker) {
   if (s.g !== undefined) {
     const person = puzzle.suspects[s.g];
-    return { text: mark('who', s.g, form === 'nom' ? person.name : person[form]), gender: person.gender };
+    const word = s.g === speaker ? ME[form] : form === 'nom' ? person.name : person[form];
+    return { text: mark('who', s.g, word), gender: person.gender };
   }
   return { text: `${PRONOUN[form]}, ${clause(puzzle, s, w)}`, gender: 'm', open: true };
 }
@@ -76,12 +80,12 @@ function sentence(...parts) {
 }
 
 // «Вера была в подвале», «Верёвку нашли не у Веры», «Вера пришла в 21:30». Текст с пометками.
-function fact(puzzle, s, k, v, negative, say = 0) {
+function fact(puzzle, s, k, v, negative, say = 0, speaker) {
   const w = WORDS[say];
   const cat = puzzle.categories[k];
   const value = cat.values[v];
   const not = negative ? 'не ' : '';
-  const S = (form) => subject(puzzle, s, form, w);
+  const S = (form) => subject(puzzle, s, form, w, speaker);
   switch (cat.key) {
     case 'place':
       return sentence(S('nom'), `${not}${verb(w.was, S('nom').gender)} ${mark('place', v, value.loc)}`);
@@ -96,19 +100,24 @@ function fact(puzzle, s, k, v, negative, say = 0) {
   }
 }
 
-// Текст улики с пометками сущностей.
+// Текст улики с пометками сущностей. clue.by — кто это говорит (у показаний), тогда про себя — «я».
 function clueMarked(puzzle, clue) {
   const say = clue.say ?? 0;
   const w = WORDS[say];
-  const S = (s, form = 'nom') => subject(puzzle, s, form, w);
+  const S = (s, form = 'nom') => subject(puzzle, s, form, w, clue.by);
   const came = (s) => verb(w.came, S(s).gender);
   switch (clue.type) {
     case 'is':
     case 'not':
-      return fact(puzzle, clue.s, clue.k, clue.v, clue.type === 'not', say);
+      return fact(puzzle, clue.s, clue.k, clue.v, clue.type === 'not', say, clue.by);
     case 'next': {
       const both = S(clue.a).gender === 'f' && S(clue.b).gender === 'f';
-      return sentence(S(clue.a), 'и', S(clue.b), `${w.cameAll} ${both ? 'одна за другой' : 'один за другим'}`);
+      const pair = both ? 'одна за другой' : 'один за другим';
+      // в показаниях про себя: «Мы с Кузьмой пришли один за другим»
+      const me = (s) => clue.by !== undefined && s.g === clue.by;
+      const other = me(clue.a) ? clue.b : me(clue.b) ? clue.a : null;
+      if (other) return sentence('мы с', S(other, 'ins'), `${w.cameAll} ${pair}`);
+      return sentence(S(clue.a), 'и', S(clue.b), `${w.cameAll} ${pair}`);
     }
     case 'notNext':
       return sentence('между', S(clue.a, 'ins'), 'и', S(clue.b, 'ins'), `${w.cameSomeone} кто-то ещё`);

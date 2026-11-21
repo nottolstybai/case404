@@ -5,6 +5,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "stamp": "node scripts/stamp.mjs",
-    "og": "node scripts/og.mjs"
+    "og": "node scripts/og.mjs",
+    "cases": "node scripts/testimony-cases.mjs"
   }
 }

@@ -1,4 +1,4 @@
-// Перед публикацией: ставит в index.html отпечатки файлов (?v=…).
+// Перед публикацией: ставит в index.html и proto.html отпечатки файлов (?v=…).
 // GitHub Pages кэширует файлы; без отпечатков после обновления браузер может взять
 // новый index.html и старые скрипты из кэша — и игра сломается.
 // Запуск из корня проекта: npm run stamp
@@ -11,16 +11,23 @@ const versioned = (path) => `${path}?v=${hash(path)}`;
 const modules = readdirSync('src').filter((f) => f.endsWith('.js')).sort();
 const imports = Object.fromEntries(modules.map((f) => [`./src/${f}`, `./${versioned(`src/${f}`)}`]));
 
-const block = [
-  '<!-- stamp: обновляется командой npm run stamp -->',
-  `  <link rel="stylesheet" href="${versioned('style.css')}">`,
-  `  <script type="importmap">${JSON.stringify({ imports })}</script>`,
-  `  <script type="module" src="${versioned('src/main.js')}"></script>`,
-  '  <!-- /stamp -->',
-].join('\n');
+// Страница: свои стили и свой вход; карта модулей у всех общая.
+const PAGES = [
+  { html: 'index.html', styles: ['style.css'], entry: 'src/main.js' },
+  { html: 'proto.html', styles: ['style.css', 'proto.css'], entry: 'src/proto.js' },
+];
 
-const html = readFileSync('index.html', 'utf8');
-const updated = html.replace(/<!-- stamp:[\s\S]*?<!-- \/stamp -->/, block);
-if (updated === html && !html.includes(block)) throw new Error('в index.html нет блока <!-- stamp: … /stamp -->');
-writeFileSync('index.html', updated);
-console.log(`index.html: ${modules.length} модулей + style.css с отпечатками`);
+for (const page of PAGES) {
+  const block = [
+    '<!-- stamp: обновляется командой npm run stamp -->',
+    ...page.styles.map((css) => `  <link rel="stylesheet" href="${versioned(css)}">`),
+    `  <script type="importmap">${JSON.stringify({ imports })}</script>`,
+    `  <script type="module" src="${versioned(page.entry)}"></script>`,
+    '  <!-- /stamp -->',
+  ].join('\n');
+  const html = readFileSync(page.html, 'utf8');
+  const updated = html.replace(/<!-- stamp:[\s\S]*?<!-- \/stamp -->/, block);
+  if (updated === html && !html.includes(block)) throw new Error(`в ${page.html} нет блока <!-- stamp: … /stamp -->`);
+  writeFileSync(page.html, updated);
+  console.log(`${page.html}: ${modules.length} модулей + ${page.styles.join(', ')} с отпечатками`);
+}

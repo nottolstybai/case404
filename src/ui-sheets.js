@@ -158,7 +158,7 @@ function giveup(S) {
 }
 
 // «Хроника ночи» в итоге: пятеро по времени прихода, преступник выделен.
-function chronicle(puzzle, orderK) {
+export function chronicle(puzzle, orderK) {
   const rows = puzzle.suspects
     .map((p, g) => ({ p, g, slot: puzzle.solution[g][orderK] }))
     .sort((a, b) => a.slot - b.slot)
@@ -236,11 +236,12 @@ const SHEETS = { brief, help, menu, accuse, giveup, result };
 // а здесь меняется только содержимое. Окно без листа пустое и скрыто браузером.
 // closedby="any" — закрыть можно и касанием мимо листа; Esc, жест «назад» и клик мимо приходят в main.js событием cancel.
 // data-key у содержимого — имя листа: при смене листа оно создаётся заново и въезжает с анимацией.
-export function sheetHtml(name, S) {
+// sheets — набор листов: у прототипа режима «показания» (proto.js) свои, обёртка окна — общая.
+export function sheetHtml(name, S, sheets = SHEETS) {
   const body = name
     ? `<div class="sheet-body" data-key="${name}">
         ${name !== 'brief' ? `<button class="sheet-x" data-act="close-sheet" aria-label="Закрыть">${ICONS.close}</button>` : ''}
-        ${SHEETS[name](S)}
+        ${sheets[name](S)}
       </div>`
     : '';
   // tabindex="-1" — чтобы фокус можно было поставить на сам лист

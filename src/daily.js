@@ -67,8 +67,9 @@ export const isRandomKey = (text) => /^x-[0-9a-z]{4,8}$/.test(text ?? '');
 export const isCaseKey = (text) => isDateKey(text) || isRandomKey(text);
 
 // Одно дело: rand — генератор от ключа, number — номер для «колод» текстов,
-// themeKey — место. Порядок вызовов rand менять нельзя: иначе изменятся прошлые дела.
-function buildPuzzle(rand, number, themeKey) {
+// themeKey — место, make — генератор улик (generate или testimony — режим «показания» в proto.html).
+// Порядок вызовов rand менять нельзя: иначе изменятся прошлые дела.
+export function buildPuzzle(rand, number, themeKey, make = generate) {
   const theme = THEMES[themeKey];
   const pool = SUSPECTS.filter((s) => !theme.skipRoles.includes(s.role));
   const suspects = shuffle(rand, pool).slice(0, SIZE);
@@ -77,7 +78,7 @@ function buildPuzzle(rand, number, themeKey) {
     { key: 'place', title: 'Место', values: shuffle(rand, theme.places).slice(0, SIZE) },
     { key: 'item', title: 'Предмет', values: shuffle(rand, theme.items).slice(0, SIZE) },
   ];
-  const puzzle = generate(rand, { suspects, categories });
+  const puzzle = make(rand, { suspects, categories });
   const intro = deck(theme.intros.length, number, `intro:${themeKey}`);
   const mainKey = categories[puzzle.culpritClue.k].key;
   // главная улика должна сочетаться со вступлением: «орудие» — только если тело нашли

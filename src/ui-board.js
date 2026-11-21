@@ -44,6 +44,7 @@ function cell(f, r, t, name, time) {
     f.culprit.slot === t && 'cul',
     f.locked.has(t) && 'lk',
     target && `tgt tgt-${target}`,
+    f.draft?.has(`${r}:${t}`) && 'draft', // отметка карандашом — сделана при проверке версии
   ]
     .filter(Boolean)
     .join(' ');

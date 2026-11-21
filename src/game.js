@@ -101,6 +101,9 @@ function remember(game, cell = null) {
   game.last = cell;
 }
 
+// Запомнить доску перед ходом, который делает не tap(): например, отказ от версии в режиме показаний.
+export const checkpoint = (game) => remember(game);
+
 // Ход ничего не изменил (клетку прощёлкали по кругу) — в отмене он не нужен.
 function forgetIfSame(game) {
   if (game.past.length && game.past[game.past.length - 1] === snapshot(game)) {

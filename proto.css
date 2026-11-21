@@ -1,0 +1,114 @@
+/* Прототип режима «показания» (proto.html): только то, чего нет в style.css. */
+
+.proto-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font-family: var(--narrow);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 4px;
+  opacity: 0.8;
+}
+
+/* ---------- показания: карточка на человека ---------- */
+.witnesses { margin: 0; padding: 0; list-style: none; }
+.witness, .protocol { padding: 8px 10px 6px; border-bottom: 1px solid var(--rule); }
+.w-head { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+.w-head .mini { display: block; flex: none; width: 22px; height: 26px; }
+.w-head .mini svg { display: block; width: 100%; height: 100%; }
+.w-name { display: flex; flex: 1; align-items: baseline; gap: 8px; min-width: 0; }
+.w-name b { color: var(--c-who); font-size: 16px; }
+.w-role { overflow: hidden; font-family: var(--narrow); font-size: 14px; color: var(--graphite); white-space: nowrap; text-overflow: ellipsis; }
+/* «Лжёт?» — карандашная пометка на полях; включённая — штемпелем */
+.w-liar {
+  flex: none;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--form);
+  border-radius: 3px;
+  background: none;
+  color: var(--form);
+  font-family: var(--narrow);
+  font-size: 15px;
+}
+.w-liar.on { border-color: var(--stamp); background: var(--stamp); color: #fff; }
+.witness.testing { background: rgba(192, 57, 43, 0.06); box-shadow: inset 3px 0 0 var(--stamp); }
+.witness.marked { box-shadow: inset 3px 0 0 var(--stamp); }
+
+/* фразы: тап — подсветка на доске */
+.w-says { margin: 2px 0 0; padding: 0; list-style: none; }
+.say {
+  display: block;
+  width: 100%;
+  padding: 5px 6px 5px 30px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  font-family: var(--serif);
+  font-size: 15.5px;
+  line-height: 1.4;
+  text-align: left;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+.say::before { content: '—'; float: left; margin-left: -22px; color: var(--graphite); }
+.say.act { background: var(--form-wash); box-shadow: inset 3px 0 0 var(--form); }
+.say.conflict { box-shadow: inset 3px 0 0 var(--stamp); }
+.say.done .txt, .say.done .flip { opacity: 0.6; }
+.say .badge { display: table; }
+/* перевёрнутая фраза: сказанное зачёркнуто, ниже — что из него следует */
+.said { display: block; color: var(--graphite); text-decoration-color: var(--stamp); text-decoration-thickness: 1.5px; }
+.flip { display: block; margin-top: 2px; }
+.flip-tag { margin-right: 6px; font-family: var(--narrow); font-size: 13px; font-weight: 700; color: var(--stamp-ink); text-transform: uppercase; letter-spacing: 0.04em; }
+.say.fact::before { content: '§'; }
+
+/* полоса версии */
+.version {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--stamp);
+  border-bottom: 1px solid var(--rule);
+  background: rgba(192, 57, 43, 0.12);
+  animation: drop 0.2s ease-out;
+}
+.version p { margin: 0; font-size: 14.5px; line-height: 1.35; }
+.version-btns { display: flex; gap: 6px; }
+.v-btn { flex: 1; min-height: 36px; border: 1px solid var(--form); border-radius: 3px; background: none; color: var(--ink); font-family: var(--narrow); font-size: 15px; font-weight: 700; }
+.v-btn.keep { border-color: var(--stamp); background: var(--stamp); color: #fff; }
+.desk .version { margin: 0 0 10px; }
+
+/* отметки карандашом — сделаны при проверке версии */
+.cell.draft .x path { stroke: #9a978e; stroke-dasharray: 3 2.2; }
+.board .cell.draft.m-v { background: repeating-linear-gradient(-55deg, rgba(85, 84, 79, 0.32) 0 2px, transparent 2px 4.5px); box-shadow: inset 0 0 0 1.5px var(--graphite); }
+.board .cell.draft.m-v .v path { stroke: var(--graphite); }
+
+/* панель на телефоне: показания — прокручиваемый список */
+.dock .clues.mode-list > .cl-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+/* компьютер: показания на листе дела слева */
+.file .witness, .file .protocol { padding-left: 0; padding-right: 0; }
+.file .witness.testing, .file .witness.marked { padding-left: 8px; }
+.rule-line { margin: 2px 0 6px; font-size: 15px; }
+
+/* как играть, разбор */
+.howto { margin: 0; padding-left: 22px; font-size: 15.5px; line-height: 1.45; }
+.howto li { margin: 8px 0; }
+.howto li::marker { color: var(--stamp-ink); font-family: var(--narrow); font-weight: 700; }
+.explain { font-size: 15px; }
+/* вступление длинное — «Начать» всегда под рукой, как «Понятно» в справке */
+.sheet-brief .actions {
+  position: sticky;
+  bottom: calc(-1 * var(--pad-b));
+  z-index: 2;
+  margin: 18px calc(-1 * var(--pad-x)) calc(-1 * var(--pad-b));
+  padding: 10px var(--pad-x) calc(var(--pad-b) - 8px);
+  background: var(--grain), var(--mottle), var(--paper);
+  box-shadow: 0 -10px 16px rgba(227, 228, 220, 0.95);
+}
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
