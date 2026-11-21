@@ -28,7 +28,7 @@ import {
   view,
 } from './game.js';
 import { clueRefs, context, onlyValue, ref, settled } from './logic.js';
-import { goneText, introText, themeTitle } from './text.js';
+import { clueText, goneText, introText, themeTitle } from './text.js';
 import { scene } from './art.js';
 import { clock, plural, record, shareText, streak, untilMidnight } from './stats.js';
 import { morph } from './morph.js';
@@ -38,6 +38,24 @@ import { bannerHtml, sheetHtml } from './ui-sheets.js';
 import { ICONS, esc, storage } from './ui-util.js';
 
 const app = document.getElementById('app');
+
+// Объявления для экранного диктора: одна вежливая live-область на страницу. Она живёт вне #app — morph её не трогает,
+// и появляется заранее: область, вставленная вместе с текстом, обычно молчит. Где есть ariaNotify() — говорим через него.
+const announcer = Object.assign(document.createElement('p'), { className: 'visually-hidden' });
+announcer.setAttribute('aria-live', 'polite');
+document.body.append(announcer);
+let lastAnnounced = '';
+function announce(text) {
+  if (typeof document.ariaNotify === 'function') {
+    document.ariaNotify(text);
+    return;
+  }
+  // VoiceOver пропускает тот же текст, что и в прошлый раз; неразрывный пробел делает его другим, вслух его не слышно
+  const message = text === lastAnnounced ? `${text}\u00A0` : text;
+  lastAnnounced = message;
+  announcer.textContent = '';
+  requestAnimationFrame(() => (announcer.textContent = message));
+}
 
 // Дело собирается до 1 с на телефоне: сперва дадим браузеру показать заставку из index.html.
 await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
@@ -274,9 +292,13 @@ function wideHtml(f) {
     </div>`;
 }
 
+// Всплывашка — popover="manual": в верхнем слое, сама не закрывается от касаний мимо. Показывает её render(),
+// убирает таймер или кнопка. Диктору текст объявляет showToast() — вставленная вместе с текстом live-область молчит.
 const toastHtml = () =>
   ui.toast
-    ? `<div class="toast" role="status" data-key="${esc(ui.toast.text)}"><span>${esc(ui.toast.text)}</span>${ui.toast.act ? `<button data-act="${ui.toast.act}">${esc(ui.toast.label)}</button>` : ''}</div>`
+    ? `<div class="toast" popover="manual" data-key="${esc(ui.toast.text)}"><span>${esc(ui.toast.text)}</span>${
+        ui.toast.act ? `<button class="toast-act" data-act="${ui.toast.act}">${esc(ui.toast.label)}</button>` : ''
+      }<button class="toast-x" data-act="toast-close" aria-label="Закрыть уведомление">${ICONS.close}</button></div>`
     : '';
 
 // Данные для листов.
@@ -295,6 +317,7 @@ function sheetData() {
     prefilled: ui.prefilled,
     accuseError: ui.accuseError,
     shareNote: ui.shareNote,
+    keyFocus: lastInput === 'key',
     story,
     archive: archive(),
     savedGame: (k) => {
@@ -324,27 +347,38 @@ let lastSheet = null;
 let lastInput = 'pointer'; // чем игрок действовал последним: 'key' или 'pointer'
 addEventListener('keydown', () => (lastInput = 'key'), true);
 addEventListener('pointerdown', () => (lastInput = 'pointer'), true);
-let opener = null; // кто открыл лист — туда вернётся фокус
 
 function render() {
   const f = frame();
-  const html = `${headerHtml(f)}${wide() ? wideHtml(f) : phoneHtml(f)}<div class="sheets">${sheetHtml(ui.sheet, sheetData())}</div><div class="toasts">${toastHtml()}</div>`;
+  // Лист закрываем до того, как morph уберёт его содержимое: фокус ещё внутри, и браузер вернёт его туда, откуда лист открыли.
+  const dialog = app.querySelector('dialog.sheet');
+  if (!ui.sheet && dialog?.open) dialog.close();
+  const html = `${headerHtml(f)}${wide() ? wideHtml(f) : phoneHtml(f)}<div class="sheets">${sheetHtml(ui.sheet, sheetData())}</div><div class="toasts" role="region" aria-label="Уведомления">${toastHtml()}</div>`;
   morph(app, html);
-  document.body.classList.toggle('sheet-open', Boolean(ui.sheet));
-  if (ui.sheet !== lastSheet) {
-    if (ui.sheet) {
-      if (!lastSheet) opener = document.activeElement;
-      const sheet = app.querySelector('.sheet');
-      // с клавиатуры — сразу на главную кнопку; после касания или мыши — на сам лист, без рамки фокуса
-      const button = lastInput === 'key' ? sheet.querySelector('[data-autofocus]:not([disabled])') : null;
-      (button ?? sheet).focus({ preventScroll: true });
-      if (ui.sheet === 'result') loadStory();
-    } else if (opener?.isConnected) {
-      opener.focus({ preventScroll: true });
-    }
-    lastSheet = ui.sheet;
-  }
+  syncSheet();
+  const toast = app.querySelector('.toast');
+  if (toast?.showPopover && !toast.matches(':popover-open')) toast.showPopover(); // без Popover API всплывашка просто fixed-блок
   watchDock();
+}
+
+// Лист — модальный <dialog>: остальная страница инертна, Tab не уходит из листа, Esc и жест «назад» его закрывают,
+// а по закрытии браузер сам возвращает фокус. Узел окна может смениться (переход телефон ↔ компьютер) —
+// тогда новое окно просто открываем заново.
+function syncSheet() {
+  const dialog = app.querySelector('dialog.sheet');
+  const opened = Boolean(ui.sheet) && !dialog.open;
+  if (opened) dialog.showModal(); // с клавиатуры браузер сам ставит фокус на главную кнопку (autofocus)
+  if (ui.sheet && (opened || ui.sheet !== lastSheet)) {
+    const button = dialog.querySelector('[autofocus]:not([disabled])');
+    // Без autofocus (касание, мышь) браузер берёт первую кнопку листа — а нам нужен сам лист: без рамки фокуса
+    // и без прокрутки вниз к кнопке. Сменился лист в открытом окне — наверх и фокус заново, как при открытии.
+    if (!opened || !button) {
+      dialog.scrollTop = 0;
+      (button ?? dialog).focus();
+    }
+  }
+  if (ui.sheet === 'result' && lastSheet !== 'result') loadStory();
+  lastSheet = ui.sheet;
 }
 
 // Высота нижней панели — в CSS-переменную: от неё зависят высота строк доски и отступ страницы.
@@ -477,13 +511,30 @@ function doRedo() {
 }
 
 let toastTimer = 0;
+// toast: { text, act, label, from } — from: data-act кнопки, которая вызвала всплывашку (туда вернётся фокус).
 function showToast(toast, ms = 6000) {
   ui.toast = toast;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    ui.toast = null;
-    render();
-  }, ms);
+  const expire = () => {
+    // пока фокус на кнопке всплывашки, не убираем её из-под рук
+    if (app.querySelector('.toast:focus-within')) toastTimer = setTimeout(expire, 1000);
+    else hideToast();
+  };
+  toastTimer = setTimeout(expire, ms);
+  // диктору — только текст, без названий кнопок; что есть действие — одной фразой
+  announce(toast.act ? `${toast.text}. Доступно действие.` : toast.text);
+}
+
+// Убрать всплывашку (then — что сделать заодно, до отрисовки). Если фокус был на её кнопке,
+// он не должен пропасть вместе с ней: возвращаем его к вызвавшей кнопке, а если она недоступна — на доску.
+function hideToast(then) {
+  const from = ui.toast?.from;
+  const focused = Boolean(app.querySelector('.toast:focus-within'));
+  ui.toast = null;
+  clearTimeout(toastTimer);
+  then?.();
+  render();
+  if (focused) (app.querySelector(`[data-act="${from}"]:not([disabled])`) ?? cellEl(...ui.focus))?.focus();
 }
 
 /* ---------- улики ---------- */
@@ -502,6 +553,7 @@ function stepClue(dir) {
   ui.active = ui.hint ? null : ui.cursor;
   sfx('select');
   render();
+  announce(`Улика №${i + 1}: ${clueText(puzzle, puzzle.clues[i])}`);
 }
 
 function firstOpenClue() {
@@ -566,6 +618,7 @@ function doHint() {
   sfx('hint');
   save();
   render();
+  announce(`Подсказка: ${ui.hint.text}`);
   if (ui.hint.clue !== null) revealClue(ui.hint.clue);
   revealBoard();
   for (const el of app.querySelectorAll('.cell.tgt')) replay(el, 'flash');
@@ -706,15 +759,11 @@ const actions = {
     ui.hint = null;
     ui.active = null;
     sfx('clear');
-    showToast({ text: 'Доска очищена', act: 'toast-undo', label: 'Вернуть' });
+    showToast({ text: 'Доска очищена', act: 'toast-undo', label: 'Вернуть', from: 'reset' });
     changed({ sounds: false });
   },
-  'toast-undo'() {
-    ui.toast = null;
-    clearTimeout(toastTimer);
-    doUndo();
-    render();
-  },
+  'toast-undo': () => hideToast(doUndo),
+  'toast-close': () => hideToast(),
   hint: doHint,
   'close-hint'() {
     ui.hint = null;
@@ -767,7 +816,6 @@ const actions = {
     render();
   },
   'close-sheet': closeSheet,
-  backdrop: closeSheet,
 };
 
 // Долгое нажатие на клетку — сразу ✓; после него обычный click не должен сработать.
@@ -838,7 +886,6 @@ app.addEventListener('click', (event) => {
   const el = event.target.closest('[data-act]');
   if (!el || el.disabled) return;
   const act = el.dataset.act;
-  if (act === 'backdrop' && event.target !== el) return; // клик внутри листа
   if (act === 'cell' && suppressClick) {
     suppressClick = false;
     return;
@@ -849,6 +896,47 @@ app.addEventListener('click', (event) => {
   }
   actions[act]?.(el, event);
 });
+
+/* ---------- закрытие листа ---------- */
+
+// Esc, жест «назад» и касание мимо листа (closedby="any") браузер присылает событием cancel. Закрываем сами,
+// через closeSheet: у «дела» и «как играть» при закрытии своя логика. cancel и close не всплывают — ловим на погружении.
+const isSheet = (el) => el instanceof HTMLDialogElement && el.classList.contains('sheet');
+app.addEventListener(
+  'cancel',
+  (event) => {
+    if (!isSheet(event.target)) return;
+    event.preventDefault();
+    closeSheet();
+  },
+  true,
+);
+// Второй Esc подряд без других действий браузер отменить не даёт и закрывает окно сам — догоняем состояние.
+app.addEventListener(
+  'close',
+  (event) => {
+    if (isSheet(event.target) && !event.target.open && ui.sheet) closeSheet();
+  },
+  true,
+);
+
+// Safari пока не знает closedby: касание мимо листа (по ::backdrop) ловим сами. Смотрим на координаты,
+// а не на target — target будет сам <dialog> и при касании его полей. Нажать и отпустить нужно мимо листа:
+// выделение текста, закончившееся на фоне, лист не закроет.
+if (!('closedBy' in HTMLDialogElement.prototype)) {
+  const outside = (event) => {
+    const r = event.target.getBoundingClientRect();
+    return event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom;
+  };
+  let pressedOutside = false;
+  app.addEventListener('pointerdown', (event) => {
+    pressedOutside = isSheet(event.target) && outside(event);
+  });
+  app.addEventListener('pointerup', (event) => {
+    if (pressedOutside && isSheet(event.target) && outside(event)) closeSheet();
+    pressedOutside = false;
+  });
+}
 
 // Настройки в «Как играть».
 app.addEventListener('change', (event) => {
@@ -865,43 +953,32 @@ app.addEventListener('change', (event) => {
 
 /* ---------- клавиатура ---------- */
 
-function moveFocus(dr, dt) {
-  const [r, t] = ui.focus;
-  ui.focus = [Math.max(0, Math.min(ctx.rows - 1, r + dr)), Math.max(0, Math.min(n - 1, t + dt))];
+// Стрелка с клетки на соседнюю. false — в ту сторону клеток нет: тогда стрелку не трогаем, и страница прокрутится.
+// Фокус без прокрутки, затем scrollIntoView ровно настолько, чтобы клетка была видна
+// (scroll-padding в style.css не даёт ей уйти под шапку доски и нижнюю панель).
+function moveFocus(cell, dr, dt) {
+  const r = +cell.dataset.r + dr;
+  const t = +cell.dataset.t + dt;
+  if (r < 0 || r >= ctx.rows || t < 0 || t >= n) return false;
+  ui.focus = [r, t];
   render();
-  cellEl(...ui.focus)?.focus();
-}
-
-function trapFocus(event) {
-  const sheet = app.querySelector('.sheet');
-  if (!sheet) return;
-  const items = [...sheet.querySelectorAll('button:not([disabled]), a[href], input')];
-  if (!items.length) return;
-  const first = items[0];
-  const last = items[items.length - 1];
-  if (event.shiftKey && (document.activeElement === first || document.activeElement === sheet)) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
+  const next = cellEl(r, t);
+  next?.focus({ preventScroll: true });
+  next?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  return true;
 }
 
 const ARROWS = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
 
 document.addEventListener('keydown', (event) => {
+  // Открыт лист — это модальный <dialog>: Esc и Tab внутри него обрабатывает браузер, доска недоступна.
+  if (ui.sheet) return;
   if (event.key === 'Escape') {
-    if (ui.sheet) closeSheet();
-    else if (ui.hint || ui.active !== null) {
+    if (ui.hint || ui.active !== null) {
       ui.hint = null;
       ui.active = null;
       render();
     }
-    return;
-  }
-  if (ui.sheet) {
-    if (event.key === 'Tab') trapFocus(event);
     return;
   }
   const mod = event.ctrlKey || event.metaKey;
@@ -917,11 +994,13 @@ document.addEventListener('keydown', (event) => {
     doRedo();
     return;
   }
-  const cell = event.target.closest?.('.cell[data-act]');
+  // только когда в фокусе сама клетка
+  const cell = event.target.matches?.('.cell[data-act]') ? event.target : null;
   if (!cell) return;
   if (ARROWS[event.key]) {
-    event.preventDefault();
-    moveFocus(...ARROWS[event.key]);
+    // со Shift, Alt, Ctrl или Cmd — не наше: Alt+← в браузере — «назад»
+    if (mod || event.altKey || event.shiftKey || event.defaultPrevented) return;
+    if (moveFocus(cell, ...ARROWS[event.key])) event.preventDefault();
   } else if (event.key === 'Enter' && event.shiftKey) {
     event.preventDefault();
     tapCell(+cell.dataset.r, +cell.dataset.t, CHECK);

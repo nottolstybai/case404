@@ -7,9 +7,13 @@ const key = (node) => (node.nodeType === ELEMENT ? node.getAttribute('data-key')
 // Можно ли обновить старый узел, а не заменять его новым.
 const same = (a, b) => a.nodeType === b.nodeType && a.nodeName === b.nodeName && key(a) === key(b);
 
+// open у <dialog> ставит и снимает сам браузер (showModal/close): в разметке его нет, и стирать его нельзя —
+// иначе окно закроется в обход close() и не вернёт фокус.
+const browserOwned = (el, name) => name === 'open' && el.nodeName === 'DIALOG';
+
 function syncAttributes(el, next) {
   for (const { name } of [...el.attributes]) {
-    if (!next.hasAttribute(name)) el.removeAttribute(name);
+    if (!next.hasAttribute(name) && !browserOwned(el, name)) el.removeAttribute(name);
   }
   for (const { name, value } of next.attributes) {
     if (el.getAttribute(name) !== value) el.setAttribute(name, value);

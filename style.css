@@ -20,17 +20,18 @@
   --serif: 'PT Serif', Georgia, serif;
   --mono: 'PT Mono', ui-monospace, monospace;
   --narrow: 'PT Sans Narrow', 'Arial Narrow', sans-serif;
-  --vh: 100vh;
+  /* малая высота окна: строки доски не прыгают, когда браузер прячет и показывает адресную строку */
+  --vh: 100svh;
   color-scheme: light;
-}
-
-@supports (height: 100svh) {
-  :root { --vh: 100svh; }
 }
 
 * { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; }
+html {
+  -webkit-text-size-adjust: 100%;
+  /* фокус и scrollIntoView не прячут клетку под липкой шапкой доски и нижней панелью (--dock-h ставит main.js) */
+  scroll-padding-block: 56px calc(var(--dock-h, 0px) + 8px);
+}
 
 body {
   margin: 0;
@@ -42,7 +43,6 @@ body {
   -webkit-tap-highlight-color: transparent;
   overflow-x: hidden;
 }
-body.sheet-open { overflow: hidden; }
 
 /* зерно: волокна бумаги на телефоне, ворс сукна на компьютере */
 body::before {
@@ -106,7 +106,18 @@ button:disabled { opacity: 0.35; cursor: default; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--pencil); outline-offset: 2px; }
 svg.ico { width: 20px; height: 20px; display: block; flex: none; }
 
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* текст только для экранного диктора; clip-path вместо устаревшего clip */
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
 
 #app {
   position: relative;
@@ -594,17 +605,21 @@ svg.ico { width: 20px; height: 20px; display: block; flex: none; }
 .hint-x { width: 36px; height: 36px; border: 0; background: none; color: var(--graphite); font-size: 16px; }
 @keyframes drop { from { opacity: 0; transform: translateY(6px); } }
 
-/* всплывашка «Доска очищена» с кнопкой «Вернуть» — полоска сукна */
+/* всплывашка «Доска очищена» с кнопкой «Вернуть» — полоска сукна.
+   Это popover="manual" в верхнем слое: снимаем браузерные inset, margin и рамку поповера.
+   Без Popover API атрибут не значит ничего, и полоска — обычный fixed-блок с z-index. */
 .toast {
   position: fixed;
-  left: 50%;
-  bottom: calc(var(--dock-h, 0px) + 12px);
+  inset: auto auto calc(var(--dock-h, 0px) + 12px) 50%;
   z-index: 8;
   display: flex;
   align-items: center;
   gap: 10px;
   max-width: calc(100vw - 32px);
-  padding: 6px 6px 6px 14px;
+  margin: 0;
+  padding: 6px 4px 6px 14px;
+  border: 0;
+  overflow: visible;
   border-radius: 3px;
   background: var(--baize);
   color: var(--on-baize);
@@ -615,38 +630,53 @@ svg.ico { width: 20px; height: 20px; display: block; flex: none; }
   animation: toast-in 0.22s ease-out;
 }
 .toast button { min-height: 38px; padding: 0 12px; border: 0; background: none; color: var(--on-baize); font-size: 15px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.toast .toast-x { display: grid; place-items: center; min-width: 38px; padding: 0; color: var(--baize-muted); }
+.toast .toast-x svg.ico { width: 17px; height: 17px; }
+.toast :focus-visible { outline-color: var(--on-baize); }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 10px); } }
 
-/* ---------- листы: бумага поверх притушенного стола ---------- */
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  background: rgba(16, 24, 20, 0.66);
-  animation: fade 0.2s ease-out;
-}
-@keyframes fade { from { opacity: 0; } }
+/* ---------- листы: модальный <dialog> — бумага поверх притушенного стола ---------- */
+/* Телефон: лист прижат к низу (margin-top: auto), во всю ширину до 560 px; компьютер — по центру (ниже, в @media).
+   Задаём всё, что браузер ставит окну сам: рамку, поля, цвета, max-width/max-height.
+   position не трогаем: у открытого модального окна он fixed, иначе окно не встанет поверх экрана. */
 .sheet {
-  position: relative;
   width: 100%;
   max-width: 560px;
-  max-height: 92vh;
   max-height: calc(var(--vh) * 0.92);
+  margin: auto auto 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: contain; /* прокрутка листа не уходит странице под ним */
   --pad-x: 16px;
   --pad-b: calc(20px + env(safe-area-inset-bottom));
   padding: 20px var(--pad-x) var(--pad-b);
+  border: 0;
   background: var(--grain), var(--mottle), var(--paper);
   color: var(--ink);
   box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.3);
   outline: none;
-  animation: sheet-up 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: opacity 0.3s ease-out, translate 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), scale 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-@keyframes sheet-up { from { transform: translateY(40px); opacity: 0; } }
+.sheet::backdrop {
+  background: rgba(16, 24, 20, 0.66);
+  /* без overflow ::backdrop не контейнер прокрутки, и overscroll-behavior на нём не работает:
+     жест по затемнению прокрутил бы страницу под листом. На body overflow не трогаем — не прыгает полоса прокрутки. */
+  overflow: hidden;
+  overscroll-behavior: contain;
+  transition: opacity 0.2s ease-out;
+}
+/* появление: окно открылось — переход с этих значений; сдвиг — только если движение не выключено в системе */
+@starting-style {
+  .sheet[open],
+  .sheet[open]::backdrop { opacity: 0; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  @starting-style {
+    .sheet[open] { translate: 0 40px; }
+  }
+}
+/* в открытом окне сменился лист — новое содержимое проявляется (только прозрачность: сдвиг сбил бы крестик и липкие кнопки) */
+.sheet-body { animation: sheet-swap 0.22s ease-out; }
+@keyframes sheet-swap { from { opacity: 0; } }
 .sheet-x { position: absolute; top: 8px; right: 8px; z-index: 2; display: grid; place-items: center; width: 40px; height: 40px; border: 0; background: none; color: var(--graphite); }
 .sheet-title { margin: 0 0 6px; padding-right: 40px; font-size: 24px; line-height: 1.2; }
 .sheet .lead { margin: 0 0 12px; font-size: 16px; }
@@ -880,13 +910,16 @@ kbd { display: inline-block; min-width: 22px; margin: 0 1px; padding: 0 5px; bor
   .desk .hintbar { margin-top: 12px; border-bottom: 0; }
   .desk-tip { margin: 12px 0 0; font-family: var(--narrow); font-size: 14px; color: var(--graphite); }
   .toast { bottom: 28px; }
-  .overlay { align-items: center; }
-  /* лист положили на стол — тоже чуть вкось; rotate, а не transform: не мешает анимациям появления и встряски */
-  .sheet { --pad-x: 22px; --pad-b: 24px; max-height: 88vh; padding-top: 22px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); rotate: -0.5deg; animation: sheet-pop 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  /* лист положили на стол по центру — тоже чуть вкось; rotate, а не transform: не мешает появлению и встряске */
+  .sheet { --pad-x: 22px; --pad-b: 24px; max-height: calc(var(--vh) * 0.88); margin: auto; padding-top: 22px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); rotate: -0.5deg; }
   .sheet .banner { height: 150px; }
   .sheet .banner .stamp-logo { top: 6px; left: 10px; width: 160px; height: 68px; }
-  @keyframes sheet-pop { from { transform: translateY(12px) scale(0.98); opacity: 0; } }
   .only-wide { display: block; }
+}
+@media (min-width: 960px) and (prefers-reduced-motion: no-preference) {
+  @starting-style {
+    .sheet[open] { translate: 0 12px; scale: 0.98; }
+  }
 }
 
 /* первая отрисовка — без анимаций */

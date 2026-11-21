@@ -174,7 +174,7 @@ export function hintText(puzzle, step, detail) {
       byRow.get(row).push(slot);
     }
     const list = [...byRow].map(([row, slots]) => {
-      const times = [...slots].sort((a, b) => a - b).map((s) => slotTime(puzzle, s));
+      const times = slots.toSorted((a, b) => a - b).map((s) => slotTime(puzzle, s));
       return `${rowInfo(puzzle, row).name} — не ${times.join(', ')}`;
     });
     const what = list.length ? ` ${capitalize(list.join('; '))}.` : '';

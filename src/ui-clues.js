@@ -65,10 +65,10 @@ function stripHtml(f) {
   </div>`;
 }
 
-// Подсказка на месте улики: та же площадь, панель не растёт.
+// Подсказка на месте улики: та же площадь, панель не растёт. Диктору её текст объявляет main.js (announce).
 function hintInPlace(h) {
   const more = h.stage === 1 ? '<button class="hint-more" data-act="hint">Подробнее</button>' : '';
-  return `<div class="hint-slot hint-${h.kind}" role="status" data-key="hint">
+  return `<div class="hint-slot hint-${h.kind}" data-key="hint">
     <p><span class="hint-tag">Подсказка</span>${esc(h.text)}</p>
     <div class="hint-btns">${more}<button class="hint-x" data-act="close-hint" aria-label="Закрыть подсказку">✕</button></div>
   </div>`;
@@ -91,7 +91,7 @@ export function cluePanelHtml(f) {
     : `<div class="one" data-swipe data-key="one">
       <button class="nav" data-act="step" data-dir="-1" aria-label="Предыдущая улика">${ICONS.prev}</button>
       ${useButton(c)}
-      <button class="${classes(c, 'one-body')}${long}${f.stepDir ? ` in-${f.stepDir > 0 ? 'r' : 'l'}` : ''}" data-act="pick" data-i="${c.i}" aria-pressed="${c.active}" aria-live="polite" data-key="one${c.i}">
+      <button class="${classes(c, 'one-body')}${long}${f.stepDir ? ` in-${f.stepDir > 0 ? 'r' : 'l'}` : ''}" data-act="pick" data-i="${c.i}" aria-pressed="${c.active}" data-key="one${c.i}">
         <span class="num">№${c.i + 1}</span><span class="txt">${partsHtml(clueParts(f.puzzle, clue))}</span>${badge(c)}
       </button>
       <button class="nav" data-act="step" data-dir="1" aria-label="Следующая улика">${ICONS.next}</button>
@@ -102,12 +102,12 @@ export function cluePanelHtml(f) {
   </div>`;
 }
 
-// Подсказка: текст, «Подробнее» на первом шаге и крестик.
+// Подсказка: текст, «Подробнее» на первом шаге и крестик. Диктору — через announce в main.js.
 export function hintHtml(f) {
   const h = f.hint;
   if (!h) return '';
   const more = h.stage === 1 ? '<button class="hint-more" data-act="hint">Подробнее</button>' : '';
-  return `<div class="hintbar hint-${h.kind}" role="status" data-key="hint">
+  return `<div class="hintbar hint-${h.kind}" data-key="hint">
     <span class="hint-tag">Подсказка</span>
     <p>${esc(h.text)}</p>
     ${more}
